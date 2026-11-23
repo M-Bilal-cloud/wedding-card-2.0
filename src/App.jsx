@@ -1,36 +1,58 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './css/style.css';
 import 'lenis/dist/lenis.css';
 import Lenis from 'lenis';
 import gsap from 'gsap';
-import { ScrollTrigger } from 'gsap/all';
+import { ScrollTrigger } from 'gsap/ScrollTrigger'; // 'gsap/all' poora bundle kheench leta tha
 import { useGSAP } from '@gsap/react';
+import LiveEventExperience, { LIVE_WEBP, Pic } from './LiveEvents';
+import {
+  BARAT_START,
+  BARAT_UNLOCK,
+  WALIMA_UNLOCK,
+  BARAT_END_REAL,
+  WALIMA_START,
+  WALIMA_END_REAL,
+  WEDDING_START,
+  VENUES,
+  mapsLink,
+  clearPreview,
+  currentPhase,
+  defaultMode,
+  getPreview,
+  isUnlocked,
+  liveEndOf,
+  nowMs,
+  syncServerClock,
+  useNowTick,
+  usePhase,
+} from './eventConfig';
 
-gsap.registerPlugin(ScrollTrigger);
+gsap.registerPlugin(ScrollTrigger, useGSAP);
 
-// Refresh par hamesha top se start ho:
-// ScrollTrigger apni scroll memory se purani position restore karta hai, usay band karo
+// Refresh par hamesha top se start
 ScrollTrigger.clearScrollMemory('manual');
 if (typeof window !== 'undefined') window.scrollTo(0, 0);
 
 /* =====================================================================
-   IMAGES  (public/images/ folder mein rakho, ya yahan naam badal do)
+   IMAGES
    ===================================================================== */
-const GATE_IMG = '/images/door.png'; // gate wali image
-const GROUND_IMG = '/images/ground.png'; // ground / garden wali background image
+const GATE_IMG = '/images/door.png';
+const GROUND_IMG = '/images/ground.png';
+
+// Loader sirf in par rukta hai (+ timeout). Live .webp background mein garam hoti hain.
+const CRITICAL_IMAGES = [GATE_IMG, GROUND_IMG, '/images/stamp-1.png', '/images/left.png'];
+const PRELOAD_TIMEOUT = 7000;
 
 /* =====================================================================
-   GATE GEOMETRY  (gate image 2048 x 768 ke hisaab se naapa gaya hai)
-   Gate ke dono darwaze (leaves) ka outline. Image ki size badle to sirf
-   GATE_W / GATE_H badal do (aspect ratio same ho to kuch nahi badalna).
+   GATE GEOMETRY (gate image 2048 x 768)
    ===================================================================== */
 const GATE_W = 2048;
 const GATE_H = 768;
-const SEAM_X = 1023.5; // dono darwazon ke beech ki line
-const LEAF_LEFT_X = 789; // left darwaze ka bahar wala kinara
-const LEAF_BOTTOM = 619; // darwaze ka neeche wala kinara
-const LOCK_Y = 460; // darwaze ka lock (stamp yahan lagta hai)
-// Left darwaze ka upar wala outline (bahar se seam tak)
+const SEAM_X = 1023.5;
+const LEAF_LEFT_X = 789;
+const LEAF_BOTTOM = 619;
+const LOCK_Y = 460;
 const LEAF_TOP = [
   [789, 276],
   [812, 266],
@@ -56,14 +78,12 @@ const toPath = (pts) =>
 
 const LEFT_POLY = [[LEAF_LEFT_X, LEAF_BOTTOM], ...LEAF_TOP, [SEAM_X, LEAF_BOTTOM]];
 const RIGHT_POLY = LEFT_POLY.map(mirror);
-// Hole: dono darwaze milakar (yahan se peeche ground image dikhti hai)
 const HOLE_POLY = [
   [LEAF_LEFT_X, LEAF_BOTTOM],
   ...LEAF_TOP,
   ...LEAF_TOP.slice(0, -1).reverse().map(mirror),
   mirror([LEAF_LEFT_X, LEAF_BOTTOM]),
 ];
-// Darwaze thora sa bara taake band hone par hairline na dikhe
 const HOLE_CLIP_D = `M0,0H1V1H0Z ${toPath(HOLE_POLY)}`;
 const LEFT_CLIP_D = toPath(grow(LEFT_POLY, 1.01, 1.006));
 const RIGHT_CLIP_D = toPath(grow(RIGHT_POLY, 1.01, 1.006));
@@ -83,12 +103,8 @@ const gateBg = {
 };
 
 /* =====================================================================
-   DATA
+   DATA (venues / times eventConfig se aate hain: ek hi source of truth)
    ===================================================================== */
-// Countdown ka target: Barat, 29 Nov 2026, 7:00 PM (Pakistan time, UTC+5)
-const WEDDING_START = new Date('2026-11-29T19:00:00+05:00').getTime();
-
-// startUtc/endUtc calendar file ke liye hain: 7 PM PKT = 14:00 UTC
 const celebrations = [
   {
     key: 'barat',
@@ -97,11 +113,11 @@ const celebrations = [
     date: '29',
     month: 'Nov 2026',
     time: '7:00 PM Onwards',
-    venue: 'Jiyo Banquet Hall',
-    address: 'Taragarh Road in Shahdara Town, Shahdara, Lahore',
-    link: 'https://www.google.com/maps/search/?api=1&query=Jiyo+Banquet+Hall+Taragarh+Road+Shahdara+Town+Lahore',
-    startUtc: '20261129T140000Z',
-    endUtc: '20261129T170000Z',
+    venue: VENUES.barat.name,
+    address: VENUES.barat.area,
+    link: mapsLink(VENUES.barat.mapQuery),
+    start: BARAT_START,
+    end: BARAT_END_REAL, // calendar mein hamesha asli waqt (?live test se mutasir nahi)
   },
   {
     key: 'walima',
@@ -110,27 +126,21 @@ const celebrations = [
     date: '30',
     month: 'Nov 2026',
     time: '8:00 PM Onwards',
-    venue: 'Sardar Banquet Hall',
-    address: 'Outfall Rd, St Nagar, Lahore',
-    link: 'https://www.google.com/maps/search/?api=1&query=Sardar+Banquet+Hall+Outfall+Rd+St+Nagar+Lahore',
-    startUtc: '20261130T150000Z',
-    endUtc: '20261130T180000Z',
+    venue: VENUES.walima.name,
+    address: VENUES.walima.area,
+    link: mapsLink(VENUES.walima.mapQuery),
+    start: WALIMA_START,
+    end: WALIMA_END_REAL,
   },
 ];
 
-// Jin images ko pehle load karna hai (cache mein aa jayen)
-const imagesToPreload = [GATE_IMG, GROUND_IMG, '/images/stamp-1.png', '/images/left.png'];
-
-// Har section par background image ka kaun sa hissa dikhe (0% = left tree, 100% = right pavilion)
-// hero/footer: beech (swans + mountains), date: left cherry tree, families: right pavilion
 const BG_POS = { hero: 50, date: 14, families: 86, celebrations: 34, footer: 64 };
 
-// Transparent (glass) card ka style
 const GLASS =
   'rounded-3xl border border-white/50 bg-white/30 backdrop-blur-md shadow-[0_10px_40px_rgba(90,62,43,0.16)]';
 
 /* =====================================================================
-   SMALL ICONS
+   ICONS
    ===================================================================== */
 const ClockIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -154,8 +164,7 @@ const CalendarIcon = () => (
 );
 
 /* =====================================================================
-   LENIS (smooth scrolling) + GSAP ScrollTrigger
-   npm i lenis
+   LENIS
    ===================================================================== */
 function useLenis(lenisRef) {
   useEffect(() => {
@@ -167,14 +176,16 @@ function useLenis(lenisRef) {
     lenisRef.current = lenis;
     lenis.stop(); // gate open hone tak scroll band
 
-    // Lenis ke scroll par ScrollTrigger ko update karo
-    lenis.on('scroll', ScrollTrigger.update);
+    const onScroll = () => ScrollTrigger.update();
+    lenis.on('scroll', onScroll);
     const tick = (time) => lenis.raf(time * 1000);
     gsap.ticker.add(tick);
     gsap.ticker.lagSmoothing(0);
 
     return () => {
+      lenis.off('scroll', onScroll);
       gsap.ticker.remove(tick);
+      gsap.ticker.lagSmoothing(500, 33); // GSAP ka default wapas (Walima ticker ko zaroorat hai)
       lenis.destroy();
       lenisRef.current = null;
     };
@@ -193,7 +204,7 @@ function ScratchCard({ children }) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     canvas.width = rect.width * dpr;
@@ -201,7 +212,6 @@ function ScratchCard({ children }) {
     ctx.scale(dpr, dpr);
     ctxRef.current = ctx;
 
-    // Gold foil
     const g = ctx.createLinearGradient(0, 0, rect.width, rect.height);
     g.addColorStop(0, '#B8860B');
     g.addColorStop(0.5, '#F3E2A9');
@@ -209,7 +219,6 @@ function ScratchCard({ children }) {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, rect.width, rect.height);
 
-    // Foil par thori sparkle dots
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
     for (let i = 0; i < 40; i++) {
       ctx.beginPath();
@@ -242,7 +251,6 @@ function ScratchCard({ children }) {
     const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
     let cleared = 0;
     let total = 0;
-    // har 16th pixel sample karo (fast)
     for (let i = 3; i < data.length; i += 64) {
       total += 1;
       if (data[i] === 0) cleared += 1;
@@ -273,13 +281,13 @@ function ScratchCard({ children }) {
 
   return (
     <div className="relative w-full h-[170px] rounded-2xl overflow-hidden border border-[#D4AF37]/50 shadow-lg bg-white/25 backdrop-blur-sm">
-      {/* Neeche wali cheez jo scratch karne par dikhegi */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">{children}</div>
 
       <canvas
         ref={canvasRef}
-        className={`absolute inset-0 w-full h-full cursor-pointer transition-opacity duration-700 ${revealed ? 'opacity-0 pointer-events-none' : 'opacity-100'
-          }`}
+        className={`absolute inset-0 w-full h-full cursor-pointer transition-opacity duration-700 ${
+          revealed ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        }`}
         style={{ touchAction: 'none' }}
         onPointerDown={onDown}
         onPointerMove={onMove}
@@ -292,15 +300,9 @@ function ScratchCard({ children }) {
 
 /* =====================================================================
    COUNTDOWN
-   Alag component hai taake har second poora App re-render na ho
    ===================================================================== */
 function Countdown({ target }) {
-  const [now, setNow] = useState(Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const now = useNowTick();
 
   const diff = Math.max(0, target - now);
   const days = Math.floor(diff / 86400000);
@@ -332,13 +334,24 @@ function Countdown({ target }) {
 }
 
 /* =====================================================================
-   ADD TO CALENDAR (.ics file)
+   ADD TO CALENDAR (.ics): waqt aur venue config se, lines RFC ke mutabiq fold
    ===================================================================== */
 const icsText = (s) =>
   s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+const icsDate = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+const fold = (line) => {
+  const out = [];
+  let l = line;
+  while (l.length > 74) {
+    out.push(l.slice(0, 74));
+    l = ' ' + l.slice(74);
+  }
+  out.push(l);
+  return out.join('\r\n');
+};
 
 const downloadIcs = () => {
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const stamp = icsDate(Date.now());
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -353,18 +366,18 @@ const downloadIcs = () => {
       'BEGIN:VEVENT',
       `UID:${c.key}-2026@mohsin-iqra-wedding`,
       `DTSTAMP:${stamp}`,
-      `DTSTART:${c.startUtc}`,
-      `DTEND:${c.endUtc}`,
+      `DTSTART:${icsDate(c.start)}`,
+      `DTEND:${icsDate(c.end)}`,
       `SUMMARY:${icsText(`${name} - Mohsin & Iqra`)}`,
       `LOCATION:${icsText(`${c.venue}, ${c.address}`)}`,
-      `DESCRIPTION:${icsText(`${name} of Mohsin & Iqra. ${c.time}. Directions: ${c.link}`)}`,
+      `DESCRIPTION:${icsText(`${name} of Mohsin & Iqra. ${c.time}. Venue: ${c.venue}. Directions: ${c.link}`)}`,
       'END:VEVENT'
     );
   });
 
   lines.push('END:VCALENDAR');
 
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+  const blob = new Blob([lines.map(fold).join('\r\n')], { type: 'text/calendar;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -376,22 +389,108 @@ const downloadIcs = () => {
 };
 
 /* =====================================================================
-   APP
+   PREVIEWS MENU
    ===================================================================== */
-function App() {
-  const [flap, setflap] = useState(false); // gate khulna shuru hua (gana start)
-  const [unlocked, setUnlocked] = useState(false); // animation khatam, scroll chalu
+const PREVIEW_ITEMS = [
+  { kind: 'barat', label: 'Barat Experience', date: '29 Nov' },
+  { kind: 'walima', label: 'Walima Experience', date: '30 Nov' },
+];
+
+function PreviewsMenu({ onSelect }) {
+  const [open, setOpen] = useState(false);
+  const now = useNowTick();
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={wrapRef}
+      className="fixed z-40"
+      style={{
+        top: 'calc(env(safe-area-inset-top, 0px) + 16px)',
+        right: 'calc(env(safe-area-inset-right, 0px) + 16px)',
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="rounded-full border border-white/50 bg-white/40 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#3A2B1C] shadow-[0_6px_24px_rgba(90,62,43,0.2)] backdrop-blur-md transition-transform hover:scale-105 active:scale-95"
+      >
+        Previews ✦
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 mt-2 w-[min(15rem,calc(100vw-2rem))] rounded-2xl border border-white/50 bg-white/55 p-2 shadow-[0_14px_40px_rgba(90,62,43,0.25)] backdrop-blur-xl"
+        >
+          {PREVIEW_ITEMS.map((it) => {
+            const unlocked = isUnlocked(it.kind, now);
+            return unlocked ? (
+              <button
+                key={it.kind}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  onSelect(it.kind);
+                }}
+                className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-[#2C1D12] transition-colors hover:bg-white/70"
+              >
+                <span>{it.label}</span>
+                <span className="text-[10px] uppercase tracking-widest text-[#B8860B]">Open ▸</span>
+              </button>
+            ) : (
+              <div
+                key={it.kind}
+                role="menuitem"
+                aria-disabled="true"
+                className="flex w-full cursor-not-allowed items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold text-[#5A3E2B]/70"
+              >
+                <span>{it.label}</span>
+                <span className="text-[10px] tracking-wide">🔒 Unlocks {it.date}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =====================================================================
+   APP (pastel garden website)
+   ===================================================================== */
+function App({ phase, onPreview, skipIntro, onGateOpen }) {
+  // Events khatam (POST) hon to gate hota hi nahi: shuru se unlocked
+  const [unlocked, setUnlocked] = useState(skipIntro || phase === 'POST');
   const [loaded, setLoaded] = useState(false);
   const [progress, setProgress] = useState(0);
-  // Phone (lambi screen) par gate image chhoti hoti hai, upar neeche khali hissa bharna padta hai
   const [narrow, setNarrow] = useState(
     () => typeof window !== 'undefined' && window.innerWidth / window.innerHeight < 0.85
   );
   const container = useRef(null);
   const lenisRef = useRef(null);
   const openedRef = useRef(false);
+  const eventsOver = phase === 'POST';
 
-  // Refs
   const sceneRef = useRef(null);
   const stageRef = useRef(null);
   const leftLeafRef = useRef(null);
@@ -412,24 +511,54 @@ function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Saari images preload karo; sab aa jayen to loader hata do
+  // Critical images preload: error ya timeout par bhi loader hat jata hai (slow mobile data)
   useEffect(() => {
+    let alive = true;
     let count = 0;
-    const done = () => {
-      count += 1;
-      setProgress(Math.round((count / imagesToPreload.length) * 100));
-      if (count === imagesToPreload.length) setLoaded(true);
+    let finished = false;
+    const finish = () => {
+      if (!alive || finished) return;
+      finished = true;
+      setProgress(100);
+      setLoaded(true);
     };
-
-    imagesToPreload.forEach((src) => {
+    const step = () => {
+      if (!alive) return;
+      count += 1;
+      setProgress(Math.round((count / CRITICAL_IMAGES.length) * 100));
+      if (count === CRITICAL_IMAGES.length) finish();
+    };
+    CRITICAL_IMAGES.forEach((src) => {
       const img = new Image();
-      img.onload = done;
-      img.onerror = done; // image fail ho jaye tab bhi loader atke nahi
+      img.onload = step;
+      img.onerror = step;
       img.src = src;
     });
+    const timer = setTimeout(finish, PRELOAD_TIMEOUT);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
   }, []);
 
-  // Images aane ke baad layout final hota hai
+  // Live .webp images background mein (idle par), slow / data-saver network par skip
+  useEffect(() => {
+    if (!loaded) return undefined;
+    const conn = navigator.connection;
+    if (conn && (conn.saveData || /2g/.test(conn.effectiveType || ''))) return undefined;
+    const run = () =>
+      LIVE_WEBP.forEach((src) => {
+        const i = new Image();
+        i.src = src;
+      });
+    const hasIdle = typeof window.requestIdleCallback === 'function';
+    const id = hasIdle ? window.requestIdleCallback(run, { timeout: 4000 }) : setTimeout(run, 2500);
+    return () => {
+      if (hasIdle) window.cancelIdleCallback(id);
+      else clearTimeout(id);
+    };
+  }, [loaded]);
+
   useEffect(() => {
     if (loaded) {
       window.scrollTo(0, 0);
@@ -437,7 +566,18 @@ function App() {
     }
   }, [loaded]);
 
-  // Jab tak gate pura khul nahi jata, page scroll lock rahega
+  // POST layout (sirf Concluded + Footer): runtime par bhi aaye to gate unlock, top par, aur triggers dobara naapo
+  useEffect(() => {
+    if (!eventsOver) return undefined;
+    setUnlocked(true);
+    window.scrollTo(0, 0);
+    lenisRef.current?.scrollTo(0, { immediate: true });
+    ScrollTrigger.refresh();
+    const raf = requestAnimationFrame(() => ScrollTrigger.refresh());
+    return () => cancelAnimationFrame(raf);
+  }, [eventsOver]);
+
+  // Gate khulne tak scroll lock; har state / unmount par reset
   useEffect(() => {
     if (!unlocked) {
       window.scrollTo(0, 0);
@@ -457,13 +597,10 @@ function App() {
   }, [unlocked]);
 
   useEffect(() => {
-    // scrollRestoration window par nahi, window.history par hota hai
     if ('scrollRestoration' in window.history) {
       window.history.scrollRestoration = 'manual';
     }
     window.scrollTo(0, 0);
-
-    // Page band/refresh hone se pehle top par le jao, taake browser top hi restore kare
     const goTop = () => window.scrollTo(0, 0);
     window.addEventListener('beforeunload', goTop);
     window.addEventListener('pageshow', goTop);
@@ -473,230 +610,170 @@ function App() {
     };
   }, []);
 
-  useGSAP(() => {
-    // 1. Radar pulse infinite animation (stamp ke ird gird)
-    const pulses = radarPulsesRef.current;
-    const pulseTween = gsap.to(pulses, {
-      scale: 2.2,
-      opacity: 0,
-      duration: 2,
-      repeat: -1,
-      stagger: 0.6,
-      ease: 'power1.out',
-    });
+  // eventsOver badalne par context revert + dobara build (sections unmount ho jate hain)
+  const { contextSafe } = useGSAP(
+    () => {
+      if (skipIntro || eventsOver) gsap.set(bgZoomRef.current, { scale: 1.14 });
 
-    // 2. Stamp glow animation
-    const glowTween = gsap.to('.stamp-seal', {
-      boxShadow: '0 0 25px rgba(212, 175, 55, 0.6)',
-      repeat: -1,
-      yoyo: true,
-      duration: 1.5,
-      ease: 'sine.inOut',
-    });
-
-    // 3. Background image ka section ke hisaab se pan (camera ek section se doosre par jata hai)
-    const panTo = (x) =>
-      gsap.to(bgZoomRef.current, {
-        backgroundPosition: `${x}% 60%`,
-        duration: 2,
-        ease: 'power2.inOut',
-        overwrite: 'auto',
-      });
-    gsap.utils.toArray('[data-bgx]').forEach((sec) => {
-      ScrollTrigger.create({
-        trigger: sec,
-        start: 'top 60%',
-        end: 'bottom 60%',
-        onToggle: (self) => {
-          if (self.isActive) panTo(Number(sec.dataset.bgx));
-        },
-      });
-    });
-
-    // 4. Save the date section
-    gsap.from('.save-item', {
-      opacity: 0,
-      y: 30,
-      duration: 0.9,
-      stagger: 0.15,
-      ease: 'power2.out',
-      scrollTrigger: {
-        trigger: '#date-section',
-        start: 'top 65%',
-        toggleActions: 'play none none reverse',
-      },
-    });
-
-    // 5. Families section
-    gsap.fromTo(
-      [topFlowerRef.current, bottomFlowerRef.current],
-      { opacity: 0, scale: 0.8 },
-      {
-        opacity: 1,
-        scale: 1,
-        duration: 1.2,
-        ease: 'power3.out',
-        scrollTrigger: {
-          trigger: '#families-section',
-          start: 'top 65%',
-          toggleActions: 'play none none reverse',
-        },
-      }
-    );
-
-    gsap.fromTo(
-      familyContentRef.current,
-      { opacity: 0, y: 40, scale: 0.97 },
-      {
-        opacity: 1,
-        y: 0,
-        scale: 1,
-        duration: 1.1,
-        ease: 'power2.out',
-        scrollTrigger: {
-          trigger: '#families-section',
-          start: 'top 65%',
-          toggleActions: 'play none none reverse',
-        },
-      }
-    );
-    gsap.from('.family-item', {
-      opacity: 0,
-      y: 18,
-      duration: 0.7,
-      stagger: 0.18,
-      delay: 0.25,
-      ease: 'power2.out',
-      scrollTrigger: {
-        trigger: '#families-section',
-        start: 'top 65%',
-        toggleActions: 'play none none reverse',
-      },
-    });
-
-    // 6. Celebration Cards
-    // 3D tilt-up entrance -> content stagger -> date count-up -> looping gold shine
-    gsap.from('.celeb-head', {
-      opacity: 0,
-      y: 24,
-      duration: 0.9,
-      ease: 'power2.out',
-      scrollTrigger: {
-        trigger: '#celebrations-section',
-        start: 'top 70%',
-        toggleActions: 'play none none reverse',
-      },
-    });
-
-    gsap.utils.toArray('.celeb-card').forEach((card) => {
-      const items = card.querySelectorAll('.reveal-item');
-      const num = card.querySelector('.date-num');
-      const target = Number(num.dataset.value);
-      const counter = { v: 0 };
-
-      const tl = gsap.timeline({
-        scrollTrigger: {
-          trigger: card,
-          start: 'top 85%',
-          toggleActions: 'play none none reverse',
-        },
-      });
-
-      tl.fromTo(
-        card,
-        { opacity: 0, y: 90, rotationX: -28, scale: 0.88, transformPerspective: 900, transformOrigin: '50% 100%' },
-        { opacity: 1, y: 0, rotationX: 0, scale: 1, duration: 1.2, ease: 'back.out(1.4)' }
-      )
-        .from(items, { opacity: 0, y: 20, duration: 0.6, stagger: 0.12, ease: 'power2.out' }, '-=0.6')
-        .to(
-          counter,
-          {
-            v: target,
-            duration: 1.2,
-            ease: 'power2.out',
-            onUpdate: () => {
-              num.textContent = Math.round(counter.v);
-            },
-          },
-          '<'
-        );
-    });
-
-    // Gold shine sweep (loop) - har card par thora delay ke saath
-    gsap.utils.toArray('.card-shine').forEach((shine, i) => {
-      gsap.fromTo(
-        shine,
-        { xPercent: 0 },
-        {
-          xPercent: 600,
-          duration: 1.6,
-          ease: 'power2.inOut',
-          repeat: -1,
-          repeatDelay: 3.5,
-          delay: 1.5 + i * 1.2,
+      if (!eventsOver) {
+        if (skipIntro) {
+          gsap.set('.intro-card', { opacity: 1, y: 0, scale: 1 });
+          gsap.set('.intro-item', { opacity: 1, y: 0 });
         }
-      );
-    });
 
-    // Chhota floating star on top of each arch
-    gsap.to('.card-star', {
-      y: -4,
-      scale: 1.15,
-      duration: 1.4,
-      repeat: -1,
-      yoyo: true,
-      ease: 'sine.inOut',
-      stagger: 0.4,
-    });
+        // Radar pulse + stamp glow
+        gsap.to(radarPulsesRef.current.filter(Boolean), {
+          scale: 2.2,
+          opacity: 0,
+          duration: 2,
+          repeat: -1,
+          stagger: 0.6,
+          ease: 'power1.out',
+        });
+        gsap.to('.stamp-seal', {
+          boxShadow: '0 0 25px rgba(212, 175, 55, 0.6)',
+          repeat: -1,
+          yoyo: true,
+          duration: 1.5,
+          ease: 'sine.inOut',
+        });
+      }
 
-    // 7. Footer
-    gsap.from('.foot-item', {
-      opacity: 0,
-      y: 30,
-      duration: 0.9,
-      stagger: 0.15,
-      ease: 'power2.out',
-      scrollTrigger: {
-        trigger: '#footer-section',
-        start: 'top 85%',
-        toggleActions: 'play none none reverse',
-      },
-    });
-    gsap.from('.foot-flower', {
-      opacity: 0,
-      scale: 0.8,
-      duration: 1.2,
-      ease: 'power3.out',
-      scrollTrigger: {
-        trigger: '#footer-section',
-        start: 'top 85%',
-        toggleActions: 'play none none reverse',
-      },
-    });
+      // Background pan (jo sections maujood hain unhi par)
+      const panTo = (x) =>
+        gsap.to(bgZoomRef.current, {
+          backgroundPosition: `${x}% 60%`,
+          duration: 2,
+          ease: 'power2.inOut',
+          overwrite: 'auto',
+        });
+      gsap.utils.toArray('[data-bgx]').forEach((sec) => {
+        ScrollTrigger.create({
+          trigger: sec,
+          start: 'top 60%',
+          end: 'bottom 60%',
+          onToggle: (self) => {
+            if (self.isActive) panTo(Number(sec.dataset.bgx));
+          },
+        });
+      });
 
-    return () => {
-      pulseTween.kill();
-      glowTween.kill();
-    };
-  }, { scope: container });
+      if (!eventsOver) {
+        // Save the date
+        gsap.from('.save-item', {
+          opacity: 0,
+          y: 30,
+          duration: 0.9,
+          stagger: 0.15,
+          ease: 'power2.out',
+          scrollTrigger: { trigger: '#date-section', start: 'top 65%', toggleActions: 'play none none reverse' },
+        });
 
-  // GATE KHOLNE KI ANIMATION
-  // stamp gayab -> dono darwaze andar ki taraf khulte hain (peeche se ground image dikhti hai)
-  // -> pura scene darwaze ke andar zoom hota hai, ground halka sa zoom -> transparent card
-  const handleOpen = () => {
+        // Families
+        const famTrigger = { trigger: '#families-section', start: 'top 65%', toggleActions: 'play none none reverse' };
+        gsap.fromTo(
+          [topFlowerRef.current, bottomFlowerRef.current],
+          { opacity: 0, scale: 0.8 },
+          { opacity: 1, scale: 1, duration: 1.2, ease: 'power3.out', scrollTrigger: famTrigger }
+        );
+        gsap.fromTo(
+          familyContentRef.current,
+          { opacity: 0, y: 40, scale: 0.97 },
+          { opacity: 1, y: 0, scale: 1, duration: 1.1, ease: 'power2.out', scrollTrigger: famTrigger }
+        );
+        gsap.from('.family-item', {
+          opacity: 0,
+          y: 18,
+          duration: 0.7,
+          stagger: 0.18,
+          delay: 0.25,
+          ease: 'power2.out',
+          scrollTrigger: famTrigger,
+        });
+
+        // Celebration cards
+        gsap.from('.celeb-head', {
+          opacity: 0,
+          y: 24,
+          duration: 0.9,
+          ease: 'power2.out',
+          scrollTrigger: { trigger: '#celebrations-section', start: 'top 70%', toggleActions: 'play none none reverse' },
+        });
+
+        gsap.utils.toArray('.celeb-card').forEach((card) => {
+          const items = card.querySelectorAll('.reveal-item');
+          const num = card.querySelector('.date-num');
+          const target = Number(num.dataset.value);
+          const counter = { v: 0 };
+
+          const tl = gsap.timeline({
+            scrollTrigger: { trigger: card, start: 'top 85%', toggleActions: 'play none none reverse' },
+          });
+
+          tl.fromTo(
+            card,
+            { opacity: 0, y: 90, rotationX: -28, scale: 0.88, transformPerspective: 900, transformOrigin: '50% 100%' },
+            { opacity: 1, y: 0, rotationX: 0, scale: 1, duration: 1.2, ease: 'back.out(1.4)' }
+          )
+            .from(items, { opacity: 0, y: 20, duration: 0.6, stagger: 0.12, ease: 'power2.out' }, '-=0.6')
+            .to(
+              counter,
+              {
+                v: target,
+                duration: 1.2,
+                ease: 'power2.out',
+                onUpdate: () => {
+                  num.textContent = Math.round(counter.v);
+                },
+              },
+              '<'
+            );
+        });
+
+        gsap.utils.toArray('.card-shine').forEach((shine, i) => {
+          gsap.fromTo(
+            shine,
+            { xPercent: 0 },
+            { xPercent: 600, duration: 1.6, ease: 'power2.inOut', repeat: -1, repeatDelay: 3.5, delay: 1.5 + i * 1.2 }
+          );
+        });
+
+        gsap.to('.card-star', { y: -4, scale: 1.15, duration: 1.4, repeat: -1, yoyo: true, ease: 'sine.inOut', stagger: 0.4 });
+      }
+
+      // Footer (dono layouts mein)
+      const footTrigger = { trigger: '#footer-section', start: 'top 85%', toggleActions: 'play none none reverse' };
+      gsap.from('.foot-item', { opacity: 0, y: 30, duration: 0.9, stagger: 0.15, ease: 'power2.out', scrollTrigger: footTrigger });
+      gsap.from('.foot-flower', { opacity: 0, scale: 0.8, duration: 1.2, ease: 'power3.out', scrollTrigger: footTrigger });
+    },
+    { scope: container, dependencies: [eventsOver], revertOnUpdate: true }
+  );
+
+  // Concluded section: ScrollTrigger ke bina (top par hai, opacity 0 par atak nahi sakta).
+  // Loader hatne tak chhupa rehta hai, phir smooth entrance.
+  useGSAP(
+    () => {
+      if (!eventsOver) return;
+      gsap.set('.concl-item', { opacity: 0, y: 26 });
+      if (!loaded) return;
+      gsap.to('.concl-item', { opacity: 1, y: 0, duration: 0.9, stagger: 0.14, delay: 0.25, ease: 'power2.out' });
+    },
+    { scope: container, dependencies: [eventsOver, loaded] }
+  );
+
+  // GATE OPEN: contextSafe => unmount par timeline khud kill (stale setState / onComplete nahi)
+  const handleOpen = contextSafe(() => {
     if (openedRef.current) return;
     openedRef.current = true;
-    setflap(true);
+    onGateOpen?.(); // user gesture: music yahin se shuru
 
     const scene = sceneRef.current;
     const stage = stageRef.current;
     const r = stage.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    // Zoom ka center = darwaze ke khulne wali jagah ka beech
     const cx = r.left + r.width * HOLE_CX;
     const cy = r.top + r.height * HOLE_CY;
-    // 1.7: taake darwaze ke arch ke kinare bhi screen se bahar chale jayen
     const k = Math.max(vw / (r.width * HOLE_WF), vh / (r.height * HOLE_HF)) * 1.7;
     gsap.set(scene, { transformOrigin: `${cx}px ${cy}px` });
 
@@ -708,21 +785,12 @@ function App() {
     });
 
     tl.to([stampBtnRef.current, labelRef.current], { opacity: 0, scale: 0.7, duration: 0.5, ease: 'power2.in' }, 0)
-      // dono darwaze andar ki taraf khulte hain
       .to(leftLeafRef.current, { rotationY: 82, duration: 1.8, ease: 'power2.inOut' }, 0.3)
       .to(rightLeafRef.current, { rotationY: -82, duration: 1.8, ease: 'power2.inOut' }, 0.3)
       .to([leftLeafRef.current, rightLeafRef.current], { opacity: 0, duration: 0.6, ease: 'power1.in' }, 1.5)
-      // ground image halki si zoom
-      .fromTo(
-        bgZoomRef.current,
-        { scale: 1 },
-        { scale: 1.14, duration: 4, ease: 'power2.out' },
-        0.9
-      )
-      // pura scene darwaze ke andar zoom hokar fade
+      .fromTo(bgZoomRef.current, { scale: 1 }, { scale: 1.14, duration: 4, ease: 'power2.out' }, 0.9)
       .to(scene, { scale: k, duration: 2, ease: 'power2.in' }, 1.1)
       .to(scene, { opacity: 0, duration: 0.7, ease: 'power1.in' }, 2.4)
-      // transparent card nazar aata hai
       .fromTo(
         '.intro-card',
         { opacity: 0, y: 50, scale: 0.94 },
@@ -730,11 +798,13 @@ function App() {
         2.6
       )
       .from('.intro-item', { opacity: 0, y: 16, duration: 0.7, stagger: 0.12, ease: 'power2.out' }, 3.0);
-  };
+  });
+
+  const cdLabel = phase === 'PRE_BARAT' ? 'Barat' : 'Walima';
+  const cdTarget = phase === 'PRE_BARAT' ? WEDDING_START : WALIMA_START;
 
   return (
     <div ref={container} className="min-h-screen w-full overflow-x-hidden">
-      {/* SVG clip shapes (gate ke darwaze aur hole) */}
       <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true" focusable="false">
         <defs>
           <clipPath id="gate-hole" clipPathUnits="objectBoundingBox">
@@ -749,10 +819,11 @@ function App() {
         </defs>
       </svg>
 
-      {/* Loading screen: images load hone tak */}
+      {/* Loading screen */}
       <div
-        className={`fixed inset-0 z-[100] bg-[#F4EFEB] flex flex-col items-center justify-center gap-4 transition-opacity duration-700 ${loaded ? 'opacity-0 pointer-events-none' : 'opacity-100'
-          }`}
+        className={`fixed inset-0 z-[100] bg-[#F4EFEB] flex flex-col items-center justify-center gap-4 transition-opacity duration-700 ${
+          loaded ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        }`}
       >
         <span className="text-[#D4AF37] text-3xl animate-pulse">✦</span>
         <p className="font-serif italic text-amber-900 text-lg tracking-wide">Loading Invitation...</p>
@@ -765,18 +836,9 @@ function App() {
         <span className="text-[10px] tracking-[0.3em] text-[#7E5C38] font-semibold">{progress}%</span>
       </div>
 
-      {/* Background song: gate par click (user interaction) ke baad start hota hai */}
-      {flap && (
-        <iframe
-          src="https://www.youtube.com/embed/RpE-hVumiDI?autoplay=1&loop=1&playlist=RpE-hVumiDI"
-          allow="autoplay"
-          title="Background Audio"
-          id="bg-audio"
-          style={{ position: 'fixed', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', border: 0 }}
-        ></iframe>
-      )}
+      <PreviewsMenu onSelect={onPreview} />
 
-      {/* GROUND BACKGROUND: har section ke peeche (fixed) */}
+      {/* GROUND BACKGROUND */}
       <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#E9DCC7]">
         <div
           ref={bgZoomRef}
@@ -792,20 +854,30 @@ function App() {
         <div className="absolute inset-0 bg-gradient-to-b from-white/10 via-transparent to-[#5A3E2B]/10"></div>
       </div>
 
-      {/* GATE SCENE (sab se upar, tap karne par khulta hai) */}
+      {/* GATE SCENE (events ke baad nahi) */}
+      {!eventsOver && (
       <div
         ref={sceneRef}
         onClick={handleOpen}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleOpen();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label="Tap to open the invitation"
         className="fixed inset-0 z-50 overflow-hidden cursor-pointer"
         style={{
-          // --sw: gate image ki width (landscape par screen bhar, phone par gate+pillars screen mein fit)
+          display: skipIntro ? 'none' : undefined,
+          touchAction: 'none', // iOS par gate ke peeche page rubber-band na ho
           '--sw': 'max(100vw, min(266.67svh, 312.5vw))',
           '--sh': 'calc(var(--sw) * 0.375)',
-          '--fh': 'calc((100svh - var(--sh)) / 2)', // upar/neeche ka khali hissa
+          '--fh': 'calc((100svh - var(--sh)) / 2)',
           '--fe': 'calc(var(--fh) + var(--sh) * 0.09 + 20px)',
         }}
       >
-        {/* Phone par upar/neeche ka khali hissa: image ki kinare wali patti stretch + blur */}
         {narrow && (
           <>
             <div
@@ -841,7 +913,6 @@ function App() {
           </>
         )}
 
-        {/* Stage: gate image apni asal ratio mein */}
         <div
           ref={stageRef}
           className="absolute"
@@ -854,23 +925,20 @@ function App() {
             perspectiveOrigin: '50% 52%',
           }}
         >
-          {/* Fixed hissa: gate ke darwaze nikal kar (hole), baqi image */}
           <div
             className="absolute inset-0 pointer-events-none"
             style={{
               ...gateBg,
               clipPath: 'url(#gate-hole)',
-              // Phone par upar/neeche ke kinare filler mein ghul jayen
               ...(narrow
                 ? {
-                  WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%)',
-                  maskImage: 'linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%)',
-                }
+                    WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%)',
+                    maskImage: 'linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%)',
+                  }
                 : null),
             }}
           ></div>
 
-          {/* Left darwaza */}
           <div
             ref={leftLeafRef}
             className="absolute inset-0 pointer-events-none"
@@ -883,7 +951,6 @@ function App() {
             }}
           ></div>
 
-          {/* Right darwaza */}
           <div
             ref={rightLeafRef}
             className="absolute inset-0 pointer-events-none"
@@ -896,7 +963,6 @@ function App() {
             }}
           ></div>
 
-          {/* Stamp (lock ki jagah) */}
           <div
             className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
             style={{ left: pct(SEAM_X, GATE_W), top: pct(LOCK_Y, GATE_H) }}
@@ -919,12 +985,12 @@ function App() {
                 src="/images/stamp-1.png"
                 className="stamp-seal w-full h-full rounded-full object-cover relative z-10 shadow-lg"
                 alt="Stamp Seal"
+                draggable={false}
               />
             </button>
           </div>
         </div>
 
-        {/* Tap to open */}
         <div
           ref={labelRef}
           className="absolute inset-x-0 flex flex-col items-center pointer-events-none z-20"
@@ -938,18 +1004,21 @@ function App() {
           </span>
         </div>
       </div>
+      )}
 
-      {/* ============ SECTION 1: TRANSPARENT INVITATION CARD ============ */}
+      {!eventsOver && (
+      <>
+      {/* ============ SECTION 1: INVITATION CARD ============ */}
       <section
         data-bgx={BG_POS.hero}
         className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 pb-[14svh]"
         style={{ minHeight: '100svh' }}
       >
-        <div className={`intro-card ${GLASS} opacity-0 w-full max-w-sm px-8 py-10 text-center flex flex-col items-center gap-4`}>
+        <div className={`intro-card ${GLASS} opacity-0 w-full max-w-sm px-6 sm:px-8 py-10 text-center flex flex-col items-center gap-4`}>
           <h1 className="text-xl md:text-2xl font-serif text-[#7E5C38] tracking-wide" style={{ direction: 'rtl' }}>
             بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
           </h1>
-          <span className="text-sm md:text-base font-serif text-[#5C4532] italic leading-relaxed block px-4" style={{ direction: 'rtl' }}>
+          <span className="text-sm md:text-base font-serif text-[#5C4532] italic leading-relaxed block px-2 sm:px-4" style={{ direction: 'rtl' }}>
             بَارَكَ ٱللَّهُ لَكِ وَبَارَكَ عَلَيْكِ وَجَمَعَ بَيْنَكُمَا فِي خَيْرٍ
           </span>
           <span className="intro-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">
@@ -984,7 +1053,7 @@ function App() {
         data-bgx={BG_POS.date}
         className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20"
       >
-        <div className={`${GLASS} w-full max-w-sm p-6 flex flex-col items-center text-center gap-6`}>
+        <div className={`${GLASS} w-full max-w-sm p-5 sm:p-6 flex flex-col items-center text-center gap-6`}>
           <div className="save-item">
             <span className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">SAVE THE DATE</span>
             <h2 className="text-2xl sm:text-3xl font-serif font-bold text-[#2C1D12] mt-1">Mark Your Calendar</h2>
@@ -1003,17 +1072,35 @@ function App() {
           </div>
 
           <div className="save-item w-full">
-            <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold mb-2">Counting down to the Barat</p>
-            <Countdown target={WEDDING_START} />
+            {eventsOver ? (
+              <div className="py-3 text-center">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">Celebrations Concluded</p>
+                <p className="font-serif italic text-sm text-[#2C1D12] mt-1">Thank you for your blessings</p>
+              </div>
+            ) : phase === 'WALIMA_LIVE' ? (
+              <div className="py-3 text-center">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">Walima Is Happening Now</p>
+                <p className="font-serif italic text-sm text-[#2C1D12] mt-1">Open Previews ✦ to join the live celebration</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold mb-2">
+                  Counting down to the {cdLabel}
+                </p>
+                <Countdown target={cdTarget} />
+              </>
+            )}
           </div>
 
-          <button
-            onClick={downloadIcs}
-            className="save-item flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-gradient-to-r from-[#5A3E2B] to-[#7E5C38] text-white text-xs uppercase tracking-widest rounded-full shadow-md hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 font-sans font-medium"
-          >
-            <CalendarIcon />
-            Add to Calendar
-          </button>
+          {!eventsOver && (
+            <button
+              onClick={downloadIcs}
+              className="save-item flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-gradient-to-r from-[#5A3E2B] to-[#7E5C38] text-white text-xs uppercase tracking-widest rounded-full shadow-md hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 font-sans font-medium"
+            >
+              <CalendarIcon />
+              Add to Calendar
+            </button>
+          )}
         </div>
       </section>
 
@@ -1024,16 +1111,16 @@ function App() {
         className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20 overflow-hidden"
       >
         <div ref={topFlowerRef} className="absolute top-0 right-0 w-[160px] sm:w-[220px] md:w-[280px] opacity-0 pointer-events-none z-10">
-          <img src="/images/left.png" className="w-full h-full object-contain rotate-180" alt="Corner Flower Top" />
+          <Pic name="left" className="w-full h-full object-contain rotate-180" alt="Corner Flower Top" />
         </div>
 
         <div ref={bottomFlowerRef} className="absolute bottom-0 left-0 w-[160px] sm:w-[220px] md:w-[280px] opacity-0 pointer-events-none z-10">
-          <img src="/images/left.png" className="w-full h-full object-contain" alt="Corner Flower Bottom" />
+          <Pic name="left" className="w-full h-full object-contain" alt="Corner Flower Bottom" />
         </div>
 
         <div
           ref={familyContentRef}
-          className={`${GLASS} w-full max-w-sm px-8 py-10 flex flex-col items-center text-center gap-5 z-20 opacity-0`}
+          className={`${GLASS} w-full max-w-sm px-6 sm:px-8 py-10 flex flex-col items-center text-center gap-5 z-20 opacity-0`}
         >
           <span className="family-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">THE FAMILIES</span>
 
@@ -1055,41 +1142,37 @@ function App() {
         </div>
       </section>
 
-      {/* ============ SECTION 4: THE CELEBRATIONS (BARAT & WALIMA) ============ */}
+      {/* ============ SECTION 4: THE CELEBRATIONS ============ */}
       <section
         id="celebrations-section"
         data-bgx={BG_POS.celebrations}
         className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20 gap-10"
       >
-        {/* Section Header */}
         <div className={`celeb-head ${GLASS} px-8 py-4 text-center z-20`}>
           <span className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">SCHEDULE &amp; VENUES</span>
           <h2 className="text-2xl sm:text-3xl font-serif font-bold text-[#2C1D12] mt-1">The Celebrations</h2>
           <div className="w-12 h-[1px] bg-[#7E5C38]/50 mx-auto mt-2"></div>
         </div>
 
-        {/* Cards Container */}
         <div className="w-full max-w-md flex flex-col gap-10 z-20 items-center">
           {celebrations.map((c) => (
             <div key={c.key} className="celeb-card w-[95%] max-w-[360px] relative opacity-0">
-              {/* Gold gradient frame */}
               <div className="rounded-t-[140px] rounded-b-3xl p-[3px] bg-gradient-to-b from-[#D4AF37] via-[#F3E2A9] to-[#B8860B] shadow-[0_20px_50px_rgba(90,62,43,0.28)]">
-                {/* Card body (transparent glass) */}
-                <div className="relative overflow-hidden rounded-t-[137px] rounded-b-[21px] bg-gradient-to-b from-white/45 to-white/20 backdrop-blur-md px-6 pt-12 pb-7 text-center flex flex-col items-center min-h-[440px]">
-
-                  {/* Thin inner border */}
+                <div className="relative overflow-hidden rounded-t-[137px] rounded-b-[21px] bg-gradient-to-b from-white/45 to-white/20 backdrop-blur-md px-5 sm:px-6 pt-12 pb-7 text-center flex flex-col items-center min-h-[440px]">
                   <div className="absolute inset-2 rounded-t-[130px] rounded-b-2xl border border-[#D4AF37]/50 pointer-events-none"></div>
 
-                  {/* Moving shine */}
                   <div className="card-shine pointer-events-none absolute top-0 -left-1/2 h-full w-1/3 -skew-x-12 bg-gradient-to-r from-transparent via-white/70 to-transparent z-10"></div>
 
-                  {/* Top: star + title */}
                   <div className="reveal-item flex flex-col items-center gap-2">
                     <span className="card-star text-[#B8860B] text-base leading-none">✦</span>
                     <span className="text-[10px] uppercase tracking-[0.35em] text-[#5A3E2B] font-semibold">{c.title}</span>
+                    {(c.key === 'barat' ? phase === 'BETWEEN' || phase === 'WALIMA_LIVE' || phase === 'POST' : phase === 'POST') && (
+                      <span className="mt-1 rounded-full border border-[#B8860B]/60 bg-white/40 px-3 py-0.5 text-[9px] uppercase tracking-[0.2em] text-[#6E4E2B] font-semibold">
+                        {c.title.charAt(0) + c.title.slice(1).toLowerCase()} Celebrated ✓
+                      </span>
+                    )}
                   </div>
 
-                  {/* Date */}
                   <div className="reveal-item mt-4 flex flex-col items-center">
                     <span className="text-[11px] uppercase tracking-[0.3em] text-[#4A3B2C] font-medium">{c.day}</span>
                     <span
@@ -1101,27 +1184,24 @@ function App() {
                     <span className="text-xs uppercase tracking-[0.25em] text-[#4A3B2C] font-medium">{c.month}</span>
                   </div>
 
-                  {/* Ornament divider */}
                   <div className="reveal-item flex items-center gap-2 my-5 w-full px-6">
                     <span className="h-[1px] flex-1 bg-gradient-to-r from-transparent to-[#B8860B]/70"></span>
                     <span className="text-[#B8860B] text-[10px]">◆</span>
                     <span className="h-[1px] flex-1 bg-gradient-to-l from-transparent to-[#B8860B]/70"></span>
                   </div>
 
-                  {/* Details */}
                   <div className="space-y-2 w-full">
                     <p className="reveal-item flex items-center justify-center gap-1.5 text-xs font-semibold text-[#4A2E12]">
                       <ClockIcon />
                       {c.time}
                     </p>
                     <h3 className="reveal-item font-serif font-bold text-xl text-[#2C1D12]">{c.venue}</h3>
-                    <p className="reveal-item flex items-start justify-center gap-1.5 text-[11px] text-[#2F2318] px-4 leading-relaxed">
+                    <p className="reveal-item flex items-start justify-center gap-1.5 text-[11px] text-[#2F2318] px-2 sm:px-4 leading-relaxed">
                       <span className="mt-[2px] text-[#8A6232] shrink-0"><PinIcon /></span>
                       <span>{c.address}</span>
                     </p>
                   </div>
 
-                  {/* Button */}
                   <div className="reveal-item w-full mt-auto pt-6 relative z-20">
                     <a
                       href={c.link}
@@ -1139,30 +1219,71 @@ function App() {
         </div>
       </section>
 
-      {/* ============ FOOTER (transparent) ============ */}
+      </>
+      )}
+
+      {/* ============ EVENTS CONCLUDED ============ */}
+      {eventsOver && (
+        <section
+          id="concluded-section"
+          data-bgx={BG_POS.footer}
+          className="relative z-10 w-full flex flex-col justify-center items-center px-4 pt-28 pb-10"
+          style={{ minHeight: '80svh' }}
+        >
+          <div className={`${GLASS} w-full max-w-sm px-6 sm:px-8 py-10 flex flex-col items-center text-center gap-4`}>
+            <span className="concl-item text-[#B8860B] text-2xl leading-none">✦</span>
+            <h2 className="concl-item text-xl font-serif text-[#7E5C38]" style={{ direction: 'rtl' }}>
+              جَزَاكُمُ ٱللَّٰهُ خَيْرًا
+            </h2>
+            <span className="concl-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">
+              Alhamdulillah
+            </span>
+            <h3 className="concl-item text-2xl sm:text-3xl font-serif font-bold text-[#2C1D12] leading-tight">
+              Celebrations Concluded
+            </h3>
+            <div className="concl-item w-12 h-[1px] bg-[#7E5C38]/50"></div>
+
+            <div className="concl-item flex flex-col gap-2 w-full">
+              {celebrations.map((c) => (
+                <div
+                  key={c.key}
+                  className="flex items-center justify-between rounded-full border border-[#D4AF37]/50 bg-white/30 px-5 py-2"
+                >
+                  <span className="text-[11px] uppercase tracking-[0.25em] text-[#4A3B2C] font-semibold">{c.title}</span>
+                  <span className="text-[11px] font-serif text-[#2C1D12]">
+                    {c.date} Nov <span className="text-[#B8860B]">✓</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <p className="concl-item text-xs text-[#4A3B2C] italic font-serif leading-relaxed">
+              Both of our celebrations have been completed. Thank you for your presence, prayers and love. Mohsin &amp; Iqra
+              are grateful for your blessings.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/* ============ FOOTER ============ */}
       <footer
         id="footer-section"
         data-bgx={BG_POS.footer}
         className="relative z-10 w-full overflow-hidden px-4 py-20 flex flex-col items-center text-center"
       >
         <div className="foot-flower absolute top-0 right-0 w-[130px] sm:w-[180px] md:w-[220px] pointer-events-none">
-          <img src="/images/left.png" className="w-full h-full object-contain rotate-180" alt="Corner Flower Top" />
+          <Pic name="left" className="w-full h-full object-contain rotate-180" alt="Corner Flower Top" />
         </div>
 
         <div className="foot-flower absolute bottom-0 left-0 w-[130px] sm:w-[180px] md:w-[220px] pointer-events-none">
-          <img src="/images/left.png" className="w-full h-full object-contain" alt="Corner Flower Bottom" />
+          <Pic name="left" className="w-full h-full object-contain" alt="Corner Flower Bottom" />
         </div>
 
         <div className={`${GLASS} relative z-20 px-10 py-8 flex flex-col items-center gap-3`}>
           <span className="foot-item text-[#B8860B] text-base leading-none">✦</span>
 
           <p className="foot-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">
-            Designed by
-          </p>
-          <p className="foot-item font-serif text-lg text-[#2C1D12] font-medium tracking-wide -mt-2">Muhammad Bilal</p>
-
-          <p className="foot-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold mt-2">
-            Developed by
+            Designed &amp; Developed by
           </p>
           <p className="foot-item font-serif text-lg text-[#2C1D12] font-medium tracking-wide -mt-2">Muhammad Bilal</p>
 
@@ -1187,4 +1308,269 @@ function App() {
   );
 }
 
-export default App;
+/* =====================================================================
+   BACKGROUND AUDIO + SOUND TOGGLE
+   Audio Root level par rehta hai: pastel site aur live mode ke beech switch par bhi chalta rehta hai.
+   YouTube IFrame API (postMessage): mute / unMute / playVideo, aur asli state wapas sunte hain.
+   ===================================================================== */
+const YT_ID = 'RpE-hVumiDI';
+const YT_ORIGIN = 'https://www.youtube.com';
+
+function useBackgroundAudio() {
+  const iframeRef = useRef(null);
+  const [started, setStarted] = useState(false); // iframe mount hua (user gesture ke baad)
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+
+  const post = useCallback((func, args = []) => {
+    const w = iframeRef.current && iframeRef.current.contentWindow;
+    if (w) w.postMessage(JSON.stringify({ event: 'command', func, args }), YT_ORIGIN);
+  }, []);
+
+  useEffect(() => {
+    if (!started) return undefined;
+    let heard = false;
+    let tries = 0;
+    const onMsg = (e) => {
+      if (e.origin !== YT_ORIGIN || e.source !== (iframeRef.current && iframeRef.current.contentWindow)) return;
+      let d = e.data;
+      if (typeof d === 'string') {
+        try {
+          d = JSON.parse(d);
+        } catch {
+          return;
+        }
+      }
+      const info = d && d.info;
+      if (!info) return;
+      heard = true;
+      if (typeof info.playerState === 'number') setPlaying(info.playerState === 1 || info.playerState === 3);
+      if (typeof info.muted === 'boolean') setMuted(info.muted);
+    };
+    window.addEventListener('message', onMsg);
+    // Player ready hone tak "listening" handshake dohrao (max ~15s)
+    const listen = () => {
+      const w = iframeRef.current && iframeRef.current.contentWindow;
+      if (w) w.postMessage(JSON.stringify({ event: 'listening', id: 'bg-audio', channel: 'widget' }), YT_ORIGIN);
+    };
+    const id = setInterval(() => {
+      tries += 1;
+      if (heard || tries > 15) clearInterval(id);
+      else listen();
+    }, 1000);
+    // Agar API se koi state na aaye (blocker wagera), maan lo music chal raha hai
+    const fallback = setTimeout(() => {
+      if (!heard) setPlaying(true);
+    }, 4000);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      clearInterval(id);
+      clearTimeout(fallback);
+    };
+  }, [started]);
+
+  const start = useCallback(() => {
+    setStarted(true);
+    setMuted(false);
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (!started) {
+      start();
+      return;
+    }
+    if (!playing) {
+      post('playVideo');
+      post('unMute');
+      setMuted(false);
+      return;
+    }
+    if (muted) {
+      post('unMute');
+      post('setVolume', [100]);
+      setMuted(false);
+    } else {
+      post('mute');
+      setMuted(true);
+    }
+  }, [started, playing, muted, post, start]);
+
+  return { iframeRef, started, on: started && playing && !muted, start, toggle };
+}
+
+const SOUND_THEME = {
+  ivory: 'border-white/60 bg-white/40 text-[#5A3E2B] shadow-[0_8px_28px_rgba(90,62,43,0.25)] hover:bg-white/55',
+  crimson: 'border-[#D4AF37]/60 bg-[#2A050D]/55 text-[#F3E2A9] shadow-[0_8px_28px_rgba(0,0,0,0.45)] hover:bg-[#2A050D]/70',
+};
+
+function SoundToggle({ on, theme, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={on ? 'Mute background music' : 'Turn on background music'}
+      aria-pressed={on}
+      title={on ? 'Sound On' : 'Sound Off'}
+      className={`fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full border backdrop-blur-md transition-transform duration-200 hover:scale-110 active:scale-95 ${SOUND_THEME[theme]}`}
+      style={{
+        bottom: 'calc(env(safe-area-inset-bottom, 0px) + 20px)',
+        right: 'calc(env(safe-area-inset-right, 0px) + 20px)',
+      }}
+    >
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" fillOpacity="0.18" />
+        {on ? (
+          <>
+            <path className="animate-pulse" d="M15.5 9a4 4 0 0 1 0 6" />
+            <path className="animate-pulse" style={{ animationDelay: '0.25s' }} d="M18 6.5a8 8 0 0 1 0 11" />
+          </>
+        ) : (
+          <path d="m16 9 5 6m0-6-5 6" />
+        )}
+      </svg>
+    </button>
+  );
+}
+
+/* =====================================================================
+   ROOT
+   - Event ka din: seedha Live experience (auto)
+   - Auto-opened live experience event ke end (10 PM PKT) par khud pastel site par aa jata hai
+   - Previews menu se kholi hui experience (replay) user ke Exit Preview tak rehti hai
+   ===================================================================== */
+function RootInner() {
+  usePhase(); // phase badalne par re-render (App ko currentPhase() milta hai)
+  const [mode, setMode] = useState(defaultMode); // null | 'barat' | 'walima'
+  const [auto, setAuto] = useState(() => !getPreview() && defaultMode() !== null);
+  const [skipIntro, setSkipIntro] = useState(false);
+  const [unlockTick, setUnlockTick] = useState(0);
+  const dismissed = useRef(new Set()); // jo live experiences user ne khud band kar di: auto dobara na khulen
+  const audio = useBackgroundAudio();
+
+  const leaveLive = useCallback(() => {
+    clearPreview(); // ?preview param + module state dono saaf
+    setSkipIntro(true);
+    setAuto(false);
+    setMode(null);
+  }, []);
+
+  // User ka khud ka Exit: us event ko "dismissed" mark karo
+  const exitManual = useCallback(() => {
+    if (mode) dismissed.current.add(mode);
+    leaveLive();
+  }, [mode, leaveLive]);
+
+  const openPreview = useCallback((kind) => {
+    setAuto(false); // user ne khud khola: auto-exit nahi
+    setMode(kind);
+  }, []);
+
+  // 1) Event ke end (10 PM PKT) par auto-opened live mode se bahar
+  useEffect(() => {
+    if (!mode || !auto) return undefined;
+    const end = liveEndOf(mode);
+    const check = () => {
+      if (nowMs() >= end) leaveLive();
+    };
+    const wait = Math.min(Math.max(end - nowMs(), 0) + 250, 2 ** 31 - 1);
+    const id = setTimeout(check, wait);
+    const onVis = () => {
+      if (!document.hidden) check();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [mode, auto, leaveLive]);
+
+  // 2) Pastel site par hon to unlock (12 AM PKT) par khud live mode mein dakhil (bina refresh)
+  useEffect(() => {
+    if (mode || getPreview()) return undefined;
+    const tryEnter = () => {
+      const k = defaultMode();
+      if (k && !dismissed.current.has(k)) {
+        setAuto(true);
+        setMode(k);
+        return true;
+      }
+      return false;
+    };
+    const now = nowMs();
+    const next = [BARAT_UNLOCK, WALIMA_UNLOCK].find((t) => t > now);
+    let id;
+    if (next != null) {
+      // timeout cap ~24 din: pehle fire par agle unlock ke liye dobara schedule
+      id = setTimeout(() => {
+        tryEnter();
+        setUnlockTick((n) => n + 1);
+      }, Math.min(next - now + 250, 2 ** 31 - 1));
+    }
+    const onVis = () => {
+      if (!document.hidden) tryEnter();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [mode, unlockTick]);
+
+  return (
+    <>
+      {mode && (
+        <button
+          type="button"
+          onClick={exitManual}
+          className="fixed z-[300] cursor-pointer rounded-full border-none bg-black/60 px-3 py-1 text-[10px] uppercase tracking-widest text-white backdrop-blur-sm"
+          style={{
+            top: 'calc(env(safe-area-inset-top, 0px) + 12px)',
+            left: 'calc(env(safe-area-inset-left, 0px) + 12px)',
+          }}
+        >
+          {auto ? 'Invitation' : 'Exit Preview'}
+        </button>
+      )}
+      {mode ? (
+        <LiveEventExperience key={mode} kind={mode} />
+      ) : (
+        // currentPhase() render par taza: auto-exit ke foran baad POST layout (1s ka purana phase nahi)
+        <App phase={currentPhase()} skipIntro={skipIntro} onPreview={openPreview} onGateOpen={audio.start} />
+      )}
+
+      {/* Background audio: Root level, mode switch par bhi chalta rehta hai */}
+      {audio.started && (
+        <iframe
+          ref={audio.iframeRef}
+          src={`${YT_ORIGIN}/embed/${YT_ID}?autoplay=1&loop=1&playlist=${YT_ID}&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(
+            window.location.origin
+          )}`}
+          allow="autoplay; encrypted-media"
+          referrerPolicy="strict-origin-when-cross-origin"
+          title="Background Audio"
+          id="bg-audio"
+          style={{ position: 'fixed', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', border: 0 }}
+        ></iframe>
+      )}
+
+      <SoundToggle on={audio.on} theme={mode === 'barat' ? 'crimson' : 'ivory'} onClick={audio.toggle} />
+    </>
+  );
+}
+
+export default function Root() {
+  // Pehle server clock se sync (max ~1.5s), taake galat device clock se unlock / live galat na ho
+  const [clockReady, setClockReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    syncServerClock().finally(() => {
+      if (alive) setClockReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!clockReady) return <div className="fixed inset-0 bg-[#F4EFEB]" />;
+  return <RootInner />;
+}
