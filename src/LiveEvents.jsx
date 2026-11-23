@@ -6,32 +6,39 @@ import { VENUES, mapsLink, useNowTick, liveStage, getPreview } from './eventConf
 
 gsap.registerPlugin(useGSAP);
 
-/* ---- BARAT family-walk end point (1-2% se tweak karo) ---- */
-const BARAT_END_SCALE = 0.5; // family ka final scale
-const BARAT_END_Y = -24; // yPercent: paon red carpet par upar archway ki taraf chadhte hain
+/* ---- RED CARPET family-walk end point (1-2% se tweak karo) ---- */
+const CARPET_END_SCALE = 0.5; // family ka final scale
+const CARPET_END_Y = -24; // yPercent: paon red carpet par upar archway ki taraf chadhte hain
 
 /* =====================================================================
    TUNING (images ke hisaab se yahin se adjust karo)
    ===================================================================== */
-// Barat
+// Red carpet scene (ab Walima ki entrance)
 export const LIVE_ASSETS = {
-  barat: ['red-carpet-tunnel', 'family-walk', 'royal-stage-sofa'],
-  walima: ['walima-road', 'walima-car', 'walima-stage'],
+  barat: ['walima-road', 'walima-car', 'royal-stage-sofa'],
+  walima: ['red-carpet-tunnel', 'family-walk', 'walima-stage'],
+};
+// Kaunsi entrance animation kis event ki (event ka data / stage / card apne hi rehte hain)
+const ENTRANCE = { barat: 'road', walima: 'carpet' };
+const STAGE_IMG = { barat: 'royal-stage-sofa', walima: 'walima-stage' };
+const STAGE_OVERLAY = {
+  barat: 'bg-gradient-to-t from-black/75 via-black/35 to-black/50',
+  walima: 'bg-gradient-to-b from-black/10 via-transparent to-black/25',
 };
 export const LIVE_WEBP = Object.values(LIVE_ASSETS)
   .flat()
   .map((n) => `/images/${n}.webp`);
 
 const ARCH_Y = 84; // red carpet ke archway ka vertical % (burn yahin se phailta hai)
-const BARAT_BG_ZOOM = 1.18; // carpet ka halka zoom
+const CARPET_BG_ZOOM = 1.18; // carpet ka halka zoom
 const WALK = 4.6; // chalne ka waqt (sec)
 const STEP = 0.55; // ek qadam ka waqt (sec)
-const BARAT_START_DELAY = 0.35; // loader fade ke baad shuru
-const BARAT_BURN_AT = 4.0; // burn kab shuru ho (sec)
-const BARAT_BURN_ORIGIN = [0.5, 1 - ARCH_Y / 100]; // aag archway se phailti hai
+const CARPET_START_DELAY = 0.35; // loader fade ke baad shuru
+const CARPET_BURN_AT = 4.0; // burn kab shuru ho (sec)
+const CARPET_BURN_ORIGIN = [0.5, 1 - ARCH_Y / 100]; // aag archway se phailti hai
 
-// Walima
-const WALIMA_START_DELAY = 0.35; // loader fade ke baad shuru (Barat jaisa)
+// Road + car scene (ab Barat ki entrance)
+const ROAD_START_DELAY = 0.35; // loader fade ke baad shuru (Barat jaisa)
 const TITLE_DROP = 0.8; // "WALIMA CELEBRATION" road par girne ka waqt (0 -> 0.8s)
 const CAR_START = 0.8; // car entry shuru
 const CAR_ENTRY = 1.7; // car neeche se aane mein (0.8 -> 2.5s)
@@ -312,6 +319,7 @@ function Leaves({ count = 9 }) {
    LIVE EXPERIENCE
    ===================================================================== */
 export default function LiveEventExperience({ kind }) {
+  const entrance = ENTRANCE[kind]; // 'carpet' | 'road'
   const root = useRef(null);
   const tlRef = useRef(null);
   const [progress, setProgress] = useState(0);
@@ -373,7 +381,7 @@ export default function LiveEventExperience({ kind }) {
          (travel / weight-shift / step-bob alag layers), phir archway ki roshni
          mein ghul kar royal stage khulta hai
          ---------------------------------------------------------- */
-      if (kind === 'barat') {
+      if (entrance === 'carpet') {
         const fam = famRef.current;
         const sway = swayRef.current;
         const bob = bobRef.current;
@@ -387,6 +395,7 @@ export default function LiveEventExperience({ kind }) {
         gsap.set(sway, { rotation: 0, transformOrigin: '50% 100%' });
         gsap.set(bob, { y: 0 });
         gsap.set('.live-item', { opacity: 0, y: 16 });
+        gsap.set('.live-pill', { opacity: 0, y: -10 });
 
         // Qadam: ek gait cycle = 2 qadam (left, right); bob har qadam par
         const steps = Math.round(WALK / STEP);
@@ -394,26 +403,28 @@ export default function LiveEventExperience({ kind }) {
         gait.push({ rotation: 0, duration: STEP / 2 });
         const bobIters = 2 * steps; // even => bob 0px par wapas aata hai
 
-        const tl = gsap.timeline({ delay: BARAT_START_DELAY });
+        const tl = gsap.timeline({ delay: CARPET_START_DELAY });
         tl
+          // top live pill
+          .to('.live-pill', { opacity: 1, y: 0, duration: 0.6, ease: 'power2.out' }, 0.2)
           // carpet halka zoom
-          .to('.live-bg1', { scale: BARAT_BG_ZOOM, duration: WALK, ease: 'power1.inOut' }, 0)
+          .to('.live-bg1', { scale: CARPET_BG_ZOOM, duration: WALK, ease: 'power1.inOut' }, 0)
           // family: zameen par chalti hui door jaati hai
-          .to(fam, { scale: BARAT_END_SCALE, yPercent: BARAT_END_Y, duration: WALK, ease: 'power1.inOut' }, 0)
+          .to(fam, { scale: CARPET_END_SCALE, yPercent: CARPET_END_Y, duration: WALK, ease: 'power1.inOut' }, 0)
           // gait sway (+-1.4deg)
           .to(sway, { keyframes: gait, easeEach: 'sine.inOut' }, 0)
           // footstep bob (0 -> -5px)
           .fromTo(bob, { y: 0 }, { y: -5, duration: STEP / 2, repeat: bobIters - 1, yoyo: true, ease: 'sine.inOut' }, 0)
           // Walima wala burn dissolve, archway se: carpet jal kar royal stage dikhta hai
-          .fromTo(burnRef, { current: 0 }, { current: 1, duration: BURN_DUR, ease: 'power1.inOut' }, BARAT_BURN_AT)
+          .fromTo(burnRef, { current: 0 }, { current: 1, duration: BURN_DUR, ease: 'power1.inOut' }, CARPET_BURN_AT)
           .fromTo(
             s1,
             { autoAlpha: 1 },
             { autoAlpha: 0, duration: BURN_DUR, ease: (p) => (glOkRef.current ? (p >= 1 ? 1 : 0) : p) },
-            BARAT_BURN_AT
+            CARPET_BURN_AT
           )
-          .to(cardLayerRef.current, { autoAlpha: 1, duration: 0.6, ease: 'power1.out' }, BARAT_BURN_AT + BURN_DUR * 0.55)
-          .to('.live-item', { opacity: 1, y: 0, duration: 0.7, stagger: 0.1, ease: 'power2.out' }, BARAT_BURN_AT + BURN_DUR * 0.6);
+          .to(cardLayerRef.current, { autoAlpha: 1, duration: 0.6, ease: 'power1.out' }, CARPET_BURN_AT + BURN_DUR * 0.55)
+          .to('.live-item', { opacity: 1, y: 0, duration: 0.7, stagger: 0.1, ease: 'power2.out' }, CARPET_BURN_AT + BURN_DUR * 0.6);
         tlRef.current = tl;
 
         if (!reduce) {
@@ -515,7 +526,7 @@ export default function LiveEventExperience({ kind }) {
       titleEl.style.visibility = 'visible';
       titleEl.style.transform = 'translate3d(-50%, 0, 0)';
 
-      const tl = gsap.timeline({ delay: WALIMA_START_DELAY });
+      const tl = gsap.timeline({ delay: ROAD_START_DELAY });
       tl
         // STEP 1 (0 -> 0.8s): "WALIMA CELEBRATION" road par thappa ban kar girta hai
         .fromTo('.road-title', { scale: 2.2, opacity: 0 }, { scale: 1, opacity: 1, duration: TITLE_DROP, ease: 'back.out(1.6)' }, 0)
@@ -577,14 +588,14 @@ export default function LiveEventExperience({ kind }) {
   };
 
   /* ============================ BARAT ============================ */
-  if (kind === 'barat') {
+  if (entrance === 'carpet') {
     return (
       <div ref={root} className="fixed inset-0 overflow-hidden bg-[#2A050D]">
         <LiveLoader ready={ready} progress={progress} bg="#2A050D" text="#F3E2A9" accent="#D4AF37" />
 
         {/* STAGE (neeche): burn ke baad / WebGL na ho to yahi */}
         <div className="absolute inset-0 z-10">
-          <Pic name="royal-stage-sofa" className="h-full w-full object-cover" />
+          <Pic name={STAGE_IMG[kind]} className="h-full w-full object-cover" />
         </div>
 
         {/* SCENE 1: red carpet + family walk */}
@@ -610,13 +621,29 @@ export default function LiveEventExperience({ kind }) {
           </div>
 
           <Sparks />
+
+          {/* Top live pill (red carpet walk ke dauran) */}
+          <div
+            className="live-pill absolute inset-x-0 z-10 flex justify-center pointer-events-none"
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 52px)', opacity: 0 }}
+          >
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#D4AF37]/60 bg-black/35 px-4 py-1.5 backdrop-blur-md">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[#D4AF37] opacity-75 animate-ping"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#D4AF37]"></span>
+              </span>
+              <span className="text-[10px] uppercase tracking-[0.25em] font-semibold text-[#F3E2A9]">
+                {LIVE[kind].name} Celebration • Live
+              </span>
+            </div>
+          </div>
         </div>
 
         {/* BURN DISSOLVE: archway se phailta hai (Walima wala hi shader) */}
         <BurnReveal
-          name="royal-stage-sofa"
+          name={STAGE_IMG[kind]}
           progressRef={burnRef}
-          origin={BARAT_BURN_ORIGIN}
+          origin={CARPET_BURN_ORIGIN}
           onStatus={(ok) => {
             glOkRef.current = ok;
           }}
@@ -625,10 +652,10 @@ export default function LiveEventExperience({ kind }) {
 
         {/* BARAT CARD */}
         <div ref={cardLayerRef} className="absolute inset-0 z-40" style={{ visibility: 'hidden', opacity: 0 }}>
-          <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/35 to-black/50 pointer-events-none"></div>
+          <div className={`absolute inset-0 pointer-events-none ${STAGE_OVERLAY[kind]}`}></div>
           <div className="relative z-10 h-full overflow-y-auto overscroll-contain">
             <div className="min-h-full flex flex-col items-center justify-center px-4 pt-10 pb-24">
-              <StageCard kind="barat" onReplay={replay} />
+              <StageCard kind={kind} onReplay={replay} />
             </div>
           </div>
         </div>
@@ -643,7 +670,7 @@ export default function LiveEventExperience({ kind }) {
 
       {/* STAGE (neeche): burn ke baad / WebGL na ho to yahi */}
       <div className="absolute inset-0 z-10">
-        <Pic name="walima-stage" className="h-full w-full object-cover" />
+        <Pic name={STAGE_IMG[kind]} className="h-full w-full object-cover" />
       </div>
 
       {/* SCENE 1: forest road + car */}
@@ -705,7 +732,7 @@ export default function LiveEventExperience({ kind }) {
                   WebkitTextFillColor: 'transparent',
                 }}
               >
-                Walima
+                {LIVE[kind].name}
               </span>
               <div className="my-[calc(var(--lane)*0.04)] flex w-full items-center gap-1.5">
                 <span className="h-px flex-1 bg-gradient-to-r from-transparent to-[#F3E2A9]"></span>
@@ -749,7 +776,7 @@ export default function LiveEventExperience({ kind }) {
 
       {/* BURN DISSOLVE: car ki jagah se phailta hai */}
       <BurnReveal
-        name="walima-stage"
+        name={STAGE_IMG[kind]}
         progressRef={burnRef}
         origin={BURN_ORIGIN}
         onStatus={(ok) => {
@@ -760,10 +787,10 @@ export default function LiveEventExperience({ kind }) {
 
       {/* WALIMA CARD */}
       <div ref={cardLayerRef} className="absolute inset-0 z-40" style={{ visibility: 'hidden', opacity: 0 }}>
-        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/25 pointer-events-none"></div>
+        <div className={`absolute inset-0 pointer-events-none ${STAGE_OVERLAY[kind]}`}></div>
         <div className="relative z-10 h-full overflow-y-auto overscroll-contain">
           <div className="min-h-full flex flex-col items-center justify-center px-4 pt-10 pb-24">
-            <StageCard kind="walima" onReplay={replay} />
+            <StageCard kind={kind} onReplay={replay} />
           </div>
         </div>
       </div>
