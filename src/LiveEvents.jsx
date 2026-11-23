@@ -29,6 +29,9 @@ export const LIVE_WEBP = Object.values(LIVE_ASSETS)
   .flat()
   .map((n) => `/images/${n}.webp`);
 
+const LIVE_LOADER_BG = '#24040A'; // Live mode loader ka background (pehle frame se)
+const PRELOAD_TIMEOUT = 8000; // slow mobile par bhi loader kabhi atakta nahi
+
 const ARCH_Y = 84; // red carpet ke archway ka vertical % (burn yahin se phailta hai)
 const CARPET_BG_ZOOM = 1.18; // carpet ka halka zoom
 const WALK = 4.6; // chalne ka waqt (sec)
@@ -134,35 +137,90 @@ const THEME = {
 };
 
 /* =====================================================================
-   IMAGES: webp pehle, png fallback
+   IMAGES: webp pehle, png fallback, aur decode() ke baad hi "ready"
    ===================================================================== */
-export const preloadPic = (name, cb) => {
-  const done = () => cb && cb();
-  const png = () => {
+const loadDecoded = (src) =>
+  new Promise((resolve) => {
     const i = new Image();
-    i.onload = done;
-    i.onerror = done;
-    i.src = `/images/${name}.png`;
-  };
-  const w = new Image();
-  w.onload = done;
-  w.onerror = png;
-  w.src = `/images/${name}.webp`;
+    i.decoding = 'async';
+    i.onload = async () => {
+      try {
+        await i.decode(); // poori tarah decode hone ke baad hi success
+      } catch {
+        /* kuch browsers mein decode() reject hota hai jabke image theek load hui hoti hai */
+      }
+      resolve(true);
+    };
+    i.onerror = () => resolve(false);
+    i.src = src;
+  });
+
+export const preloadPic = async (name, cb) => {
+  let ok = await loadDecoded(`/images/${name}.webp`);
+  if (!ok) ok = await loadDecoded(`/images/${name}.png`);
+  if (cb) cb(ok);
 };
 
-export function Pic({ name, alt = '', className = '', style }) {
-  const [noWebp, setNoWebp] = useState(false);
+// App.jsx aur LiveEventExperience dono yahi use karte hain: har decoded asset par progress + hard timeout
+export function usePreloadImages(names, timeoutMs = PRELOAD_TIMEOUT) {
+  const [state, setState] = useState({ progress: 0, ready: false });
+  const key = names.join('|');
+
+  useEffect(() => {
+    let alive = true;
+    let finished = false;
+    let count = 0;
+    const total = names.length;
+    const finish = () => {
+      if (!alive || finished) return;
+      finished = true;
+      setState({ progress: 100, ready: true });
+    };
+    names.forEach((n) =>
+      preloadPic(n, () => {
+        if (!alive || finished) return;
+        count += 1;
+        setState({ progress: Math.round((count / total) * 100), ready: false });
+        if (count === total) finish();
+      })
+    );
+    const t = setTimeout(finish, timeoutMs); // 0% / 33% par kabhi nahi atakta
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, timeoutMs]);
+
+  return state;
+}
+
+export function Pic({ name, alt = '', className = '', style, imgRef }) {
+  const [format, setFormat] = useState('webp'); // webp -> png -> failed
+  const onError = () =>
+    setFormat((f) => {
+      if (f === 'webp') return 'png';
+      if (f === 'png') {
+        console.warn(`[Pic] "${name}": na .webp load hui na .png`);
+        return 'failed';
+      }
+      return f;
+    });
+  if (format === 'failed') return null;
   return (
-    <picture className="contents">
-      {!noWebp && <source srcSet={`/images/${name}.webp`} type="image/webp" />}
+    // key: fallback par naya <picture>/<img> mount hota hai (Safari <source> hatne par dobara load nahi karta)
+    <picture key={format} className="contents">
+      {format === 'webp' && <source srcSet={`/images/${name}.webp`} type="image/webp" />}
       <img
+        ref={imgRef}
         src={`/images/${name}.png`}
         alt={alt}
         className={className}
         style={style}
+        loading="eager"
         decoding="async"
         draggable={false}
-        onError={() => setNoWebp(true)}
+        onError={onError}
       />
     </picture>
   );
@@ -322,8 +380,8 @@ export default function LiveEventExperience({ kind }) {
   const entrance = ENTRANCE[kind]; // 'carpet' | 'road'
   const root = useRef(null);
   const tlRef = useRef(null);
-  const [progress, setProgress] = useState(0);
-  const [ready, setReady] = useState(false);
+  // Har asset decode hone par progress; 8s timeout par bhi loader hat jata hai
+  const { progress, ready } = usePreloadImages(LIVE_ASSETS[kind]);
 
   // Barat refs
   const famRef = useRef(null);
@@ -341,33 +399,6 @@ export default function LiveEventExperience({ kind }) {
   const resetRoadRef = useRef(null);
   const burnRef = useRef(0);
   const glOkRef = useRef(false);
-
-  // Preload (6s safety timeout, unmount par callbacks ignore)
-  useEffect(() => {
-    const names = LIVE_ASSETS[kind];
-    let alive = true;
-    let count = 0;
-    let finished = false;
-    const finish = () => {
-      if (!alive || finished) return;
-      finished = true;
-      setProgress(100);
-      setReady(true);
-    };
-    names.forEach((n) =>
-      preloadPic(n, () => {
-        if (!alive) return;
-        count += 1;
-        setProgress(Math.round((count / names.length) * 100));
-        if (count === names.length) finish();
-      })
-    );
-    const t = setTimeout(finish, 6000);
-    return () => {
-      alive = false;
-      clearTimeout(t);
-    };
-  }, [kind]);
 
   useGSAP(
     () => {
@@ -391,7 +422,7 @@ export default function LiveEventExperience({ kind }) {
         gsap.set(s1, { autoAlpha: 1 });
         gsap.set(cardLayerRef.current, { autoAlpha: 0 });
         gsap.set('.live-bg1', { scale: 1, transformOrigin: '50% 60%' });
-        gsap.set(fam, { xPercent: -50, yPercent: 0, scale: 1, transformOrigin: '50% 90%' });
+        gsap.set(fam, { autoAlpha: 1, xPercent: -50, yPercent: 0, scale: 1, transformOrigin: '50% 90%' });
         gsap.set(sway, { rotation: 0, transformOrigin: '50% 100%' });
         gsap.set(bob, { y: 0 });
         gsap.set('.live-item', { opacity: 0, y: 16 });
@@ -587,11 +618,11 @@ export default function LiveEventExperience({ kind }) {
     tlRef.current.restart();
   };
 
-  /* ============================ BARAT ============================ */
+  /* ============================ WALIMA (red carpet + family walk) ============================ */
   if (entrance === 'carpet') {
     return (
       <div ref={root} className="fixed inset-0 overflow-hidden bg-[#2A050D]">
-        <LiveLoader ready={ready} progress={progress} bg="#2A050D" text="#F3E2A9" accent="#D4AF37" />
+        <LiveLoader ready={ready} progress={progress} bg={LIVE_LOADER_BG} text="#F3E2A9" accent="#D4AF37" />
 
         {/* STAGE (neeche): burn ke baad / WebGL na ho to yahi */}
         <div className="absolute inset-0 z-10">
@@ -608,23 +639,28 @@ export default function LiveEventExperience({ kind }) {
             style={{ background: 'radial-gradient(ellipse at 50% 70%, transparent 45%, rgba(20,2,6,0.55) 100%)' }}
           ></div>
 
-          {/* travel layer (GSAP xPercent/yPercent/scale) -> gait sway -> footstep bob */}
+          {/* travel layer (GSAP xPercent/yPercent/scale) -> gait sway -> footstep bob.
+              z-20 + opacity 1: family-walk kabhi chhup / clip nahi hota */}
           <div
             ref={famRef}
-            className="absolute bottom-0 left-1/2 w-[90vw] max-w-[460px] sm:max-w-[540px] md:max-w-[600px] will-change-transform"
+            className="absolute bottom-0 left-1/2 z-20 w-[88vw] max-w-[460px] sm:max-w-[540px] md:max-w-[600px] will-change-transform"
+            style={{ opacity: 1 }}
           >
             <div ref={swayRef} className="will-change-transform">
               <div ref={bobRef} className="will-change-transform">
-                <Pic name="family-walk" className="w-full h-auto block object-contain bg-transparent" />
+                <Pic name="family-walk" alt="Family walking" className="w-full h-auto block object-contain bg-transparent" />
               </div>
             </div>
           </div>
 
-          <Sparks />
+          {/* sparks family ke upar hi rahein */}
+          <div className="absolute inset-0 z-[25] pointer-events-none">
+            <Sparks />
+          </div>
 
           {/* Top live pill (red carpet walk ke dauran) */}
           <div
-            className="live-pill absolute inset-x-0 z-10 flex justify-center pointer-events-none"
+            className="live-pill absolute inset-x-0 z-30 flex justify-center pointer-events-none"
             style={{ top: 'calc(env(safe-area-inset-top, 0px) + 52px)', opacity: 0 }}
           >
             <div className="inline-flex items-center gap-2 rounded-full border border-[#D4AF37]/60 bg-black/35 px-4 py-1.5 backdrop-blur-md">
@@ -650,7 +686,7 @@ export default function LiveEventExperience({ kind }) {
           className="absolute inset-0 z-30"
         />
 
-        {/* BARAT CARD */}
+        {/* WALIMA CARD */}
         <div ref={cardLayerRef} className="absolute inset-0 z-40" style={{ visibility: 'hidden', opacity: 0 }}>
           <div className={`absolute inset-0 pointer-events-none ${STAGE_OVERLAY[kind]}`}></div>
           <div className="relative z-10 h-full overflow-y-auto overscroll-contain">
@@ -663,10 +699,10 @@ export default function LiveEventExperience({ kind }) {
     );
   }
 
-  /* ============================ WALIMA ============================ */
+  /* ============================ BARAT (road + car) ============================ */
   return (
     <div ref={root} className="fixed inset-0 overflow-hidden bg-[#10180f]">
-      <LiveLoader ready={ready} progress={progress} bg="#10180f" text="#F3E2A9" accent="#D4AF37" />
+      <LiveLoader ready={ready} progress={progress} bg={LIVE_LOADER_BG} text="#F3E2A9" accent="#D4AF37" />
 
       {/* STAGE (neeche): burn ke baad / WebGL na ho to yahi */}
       <div className="absolute inset-0 z-10">
@@ -785,7 +821,7 @@ export default function LiveEventExperience({ kind }) {
         className="absolute inset-0 z-30"
       />
 
-      {/* WALIMA CARD */}
+      {/* BARAT CARD */}
       <div ref={cardLayerRef} className="absolute inset-0 z-40" style={{ visibility: 'hidden', opacity: 0 }}>
         <div className={`absolute inset-0 pointer-events-none ${STAGE_OVERLAY[kind]}`}></div>
         <div className="relative z-10 h-full overflow-y-auto overscroll-contain">

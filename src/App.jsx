@@ -3,7 +3,7 @@ import './css/style.css';
 import 'lenis/dist/lenis.css';
 import Lenis from 'lenis';
 import gsap from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger'; // 'gsap/all' poora bundle kheench leta tha
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { useGSAP } from '@gsap/react';
 import LiveEventExperience, { LIVE_WEBP, Pic } from './LiveEvents';
 import {
@@ -35,14 +35,40 @@ ScrollTrigger.clearScrollMemory('manual');
 if (typeof window !== 'undefined') window.scrollTo(0, 0);
 
 /* =====================================================================
-   IMAGES
+   IMAGES (WebP primary + PNG fallback with img.decode())
    ===================================================================== */
-const GATE_IMG = '/images/door.png';
-const GROUND_IMG = '/images/ground.png';
+const CRITICAL_BASE_NAMES = ['door', 'ground', 'stamp-1', 'left'];
+const PRELOAD_TIMEOUT = 8000;
 
-// Loader sirf in par rukta hai (+ timeout). Live .webp background mein garam hoti hain.
-const CRITICAL_IMAGES = [GATE_IMG, GROUND_IMG, '/images/stamp-1.png', '/images/left.png'];
-const PRELOAD_TIMEOUT = 7000;
+function loadAndDecode(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = async () => {
+      try {
+        if (typeof img.decode === 'function') await img.decode();
+      } catch {
+        // decode fallback
+      }
+      resolve(url);
+    };
+    img.onerror = () => reject(new Error(`Failed: ${url}`));
+    img.src = url;
+  });
+}
+
+async function preloadSmartAsset(name) {
+  const webpUrl = `/images/${name}.webp`;
+  const pngUrl = `/images/${name}.png`;
+  try {
+    return await loadAndDecode(webpUrl);
+  } catch {
+    try {
+      return await loadAndDecode(pngUrl);
+    } catch {
+      return pngUrl;
+    }
+  }
+}
 
 /* =====================================================================
    GATE GEOMETRY (gate image 2048 x 768)
@@ -96,12 +122,6 @@ const HOLE_CY = (190 + LEAF_BOTTOM) / 2 / GATE_H;
 const HOLE_WF = (2 * (SEAM_X - LEAF_LEFT_X)) / GATE_W;
 const HOLE_HF = (LEAF_BOTTOM - 190) / GATE_H;
 
-const gateBg = {
-  backgroundImage: `url(${GATE_IMG})`,
-  backgroundSize: '100% 100%',
-  backgroundRepeat: 'no-repeat',
-};
-
 /* =====================================================================
    DATA (venues / times eventConfig se aate hain: ek hi source of truth)
    ===================================================================== */
@@ -117,7 +137,7 @@ const celebrations = [
     address: VENUES.barat.area,
     link: mapsLink(VENUES.barat.mapQuery),
     start: BARAT_START,
-    end: BARAT_END_REAL, // calendar mein hamesha asli waqt (?live test se mutasir nahi)
+    end: BARAT_END_REAL,
   },
   {
     key: 'walima',
@@ -174,7 +194,7 @@ function useLenis(lenisRef) {
       smoothWheel: true,
     });
     lenisRef.current = lenis;
-    lenis.stop(); // gate open hone tak scroll band
+    lenis.stop();
 
     const onScroll = () => ScrollTrigger.update();
     lenis.on('scroll', onScroll);
@@ -185,7 +205,7 @@ function useLenis(lenisRef) {
     return () => {
       lenis.off('scroll', onScroll);
       gsap.ticker.remove(tick);
-      gsap.ticker.lagSmoothing(500, 33); // GSAP ka default wapas (Walima ticker ko zaroorat hai)
+      gsap.ticker.lagSmoothing(500, 33);
       lenis.destroy();
       lenisRef.current = null;
     };
@@ -334,7 +354,7 @@ function Countdown({ target }) {
 }
 
 /* =====================================================================
-   ADD TO CALENDAR (.ics): waqt aur venue config se, lines RFC ke mutabiq fold
+   ADD TO CALENDAR (.ics)
    ===================================================================== */
 const icsText = (s) =>
   s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
@@ -479,10 +499,13 @@ function PreviewsMenu({ onSelect }) {
    APP (pastel garden website)
    ===================================================================== */
 function App({ phase, onPreview, skipIntro, onGateOpen }) {
-  // Events khatam (POST) hon to gate hota hi nahi: shuru se unlocked
   const [unlocked, setUnlocked] = useState(skipIntro || phase === 'POST');
   const [loaded, setLoaded] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [resolvedUrls, setResolvedUrls] = useState({
+    door: '/images/door.png',
+    ground: '/images/ground.png',
+  });
   const [narrow, setNarrow] = useState(
     () => typeof window !== 'undefined' && window.innerWidth / window.innerHeight < 0.85
   );
@@ -511,7 +534,7 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Critical images preload: error ya timeout par bhi loader hat jata hai (slow mobile data)
+  // Critical images preload with WebP-first + PNG-fallback + img.decode()
   useEffect(() => {
     let alive = true;
     let count = 0;
@@ -522,18 +545,19 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
       setProgress(100);
       setLoaded(true);
     };
-    const step = () => {
-      if (!alive) return;
-      count += 1;
-      setProgress(Math.round((count / CRITICAL_IMAGES.length) * 100));
-      if (count === CRITICAL_IMAGES.length) finish();
-    };
-    CRITICAL_IMAGES.forEach((src) => {
-      const img = new Image();
-      img.onload = step;
-      img.onerror = step;
-      img.src = src;
+
+    CRITICAL_BASE_NAMES.forEach((name) => {
+      preloadSmartAsset(name).then((url) => {
+        if (!alive) return;
+        if (name === 'door' || name === 'ground') {
+          setResolvedUrls((prev) => ({ ...prev, [name]: url }));
+        }
+        count += 1;
+        setProgress(Math.round((count / CRITICAL_BASE_NAMES.length) * 100));
+        if (count === CRITICAL_BASE_NAMES.length) finish();
+      });
     });
+
     const timer = setTimeout(finish, PRELOAD_TIMEOUT);
     return () => {
       alive = false;
@@ -566,7 +590,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
     }
   }, [loaded]);
 
-  // POST layout (sirf Concluded + Footer): runtime par bhi aaye to gate unlock, top par, aur triggers dobara naapo
   useEffect(() => {
     if (!eventsOver) return undefined;
     setUnlocked(true);
@@ -577,7 +600,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
     return () => cancelAnimationFrame(raf);
   }, [eventsOver]);
 
-  // Gate khulne tak scroll lock; har state / unmount par reset
   useEffect(() => {
     if (!unlocked) {
       window.scrollTo(0, 0);
@@ -610,7 +632,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
     };
   }, []);
 
-  // eventsOver badalne par context revert + dobara build (sections unmount ho jate hain)
   const { contextSafe } = useGSAP(
     () => {
       if (skipIntro || eventsOver) gsap.set(bgZoomRef.current, { scale: 1.14 });
@@ -621,7 +642,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
           gsap.set('.intro-item', { opacity: 1, y: 0 });
         }
 
-        // Radar pulse + stamp glow
         gsap.to(radarPulsesRef.current.filter(Boolean), {
           scale: 2.2,
           opacity: 0,
@@ -639,7 +659,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
         });
       }
 
-      // Background pan (jo sections maujood hain unhi par)
       const panTo = (x) =>
         gsap.to(bgZoomRef.current, {
           backgroundPosition: `${x}% 60%`,
@@ -659,7 +678,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
       });
 
       if (!eventsOver) {
-        // Save the date
         gsap.from('.save-item', {
           opacity: 0,
           y: 30,
@@ -669,7 +687,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
           scrollTrigger: { trigger: '#date-section', start: 'top 65%', toggleActions: 'play none none reverse' },
         });
 
-        // Families
         const famTrigger = { trigger: '#families-section', start: 'top 65%', toggleActions: 'play none none reverse' };
         gsap.fromTo(
           [topFlowerRef.current, bottomFlowerRef.current],
@@ -691,7 +708,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
           scrollTrigger: famTrigger,
         });
 
-        // Celebration cards
         gsap.from('.celeb-head', {
           opacity: 0,
           y: 24,
@@ -741,7 +757,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
         gsap.to('.card-star', { y: -4, scale: 1.15, duration: 1.4, repeat: -1, yoyo: true, ease: 'sine.inOut', stagger: 0.4 });
       }
 
-      // Footer (dono layouts mein)
       const footTrigger = { trigger: '#footer-section', start: 'top 85%', toggleActions: 'play none none reverse' };
       gsap.from('.foot-item', { opacity: 0, y: 30, duration: 0.9, stagger: 0.15, ease: 'power2.out', scrollTrigger: footTrigger });
       gsap.from('.foot-flower', { opacity: 0, scale: 0.8, duration: 1.2, ease: 'power3.out', scrollTrigger: footTrigger });
@@ -749,8 +764,6 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
     { scope: container, dependencies: [eventsOver], revertOnUpdate: true }
   );
 
-  // Concluded section: ScrollTrigger ke bina (top par hai, opacity 0 par atak nahi sakta).
-  // Loader hatne tak chhupa rehta hai, phir smooth entrance.
   useGSAP(
     () => {
       if (!eventsOver) return;
@@ -761,11 +774,10 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
     { scope: container, dependencies: [eventsOver, loaded] }
   );
 
-  // GATE OPEN: contextSafe => unmount par timeline khud kill (stale setState / onComplete nahi)
   const handleOpen = contextSafe(() => {
     if (openedRef.current) return;
     openedRef.current = true;
-    onGateOpen?.(); // user gesture: music yahin se shuru
+    onGateOpen?.();
 
     const scene = sceneRef.current;
     const stage = stageRef.current;
@@ -803,6 +815,12 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
   const cdLabel = phase === 'PRE_BARAT' ? 'Barat' : 'Walima';
   const cdTarget = phase === 'PRE_BARAT' ? WEDDING_START : WALIMA_START;
 
+  const gateBg = {
+    backgroundImage: `url(${resolvedUrls.door})`,
+    backgroundSize: '100% 100%',
+    backgroundRepeat: 'no-repeat',
+  };
+
   return (
     <div ref={container} className="min-h-screen w-full overflow-x-hidden">
       <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true" focusable="false">
@@ -838,13 +856,13 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
 
       <PreviewsMenu onSelect={onPreview} />
 
-      {/* GROUND BACKGROUND */}
+      {/* GROUND BACKGROUND (WebP primary + PNG fallback) */}
       <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#E9DCC7]">
         <div
           ref={bgZoomRef}
           className="absolute inset-0"
           style={{
-            backgroundImage: `url(${GROUND_IMG})`,
+            backgroundImage: `url(${resolvedUrls.ground})`,
             backgroundSize: 'cover',
             backgroundRepeat: 'no-repeat',
             backgroundPosition: `${BG_POS.hero}% 60%`,
@@ -856,370 +874,369 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
 
       {/* GATE SCENE (events ke baad nahi) */}
       {!eventsOver && (
-      <div
-        ref={sceneRef}
-        onClick={handleOpen}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            handleOpen();
-          }
-        }}
-        role="button"
-        tabIndex={0}
-        aria-label="Tap to open the invitation"
-        className="fixed inset-0 z-50 overflow-hidden cursor-pointer"
-        style={{
-          display: skipIntro ? 'none' : undefined,
-          touchAction: 'none', // iOS par gate ke peeche page rubber-band na ho
-          '--sw': 'max(100vw, min(266.67svh, 312.5vw))',
-          '--sh': 'calc(var(--sw) * 0.375)',
-          '--fh': 'calc((100svh - var(--sh)) / 2)',
-          '--fe': 'calc(var(--fh) + var(--sh) * 0.09 + 20px)',
-        }}
-      >
-        {narrow && (
-          <>
-            <div
-              className="absolute pointer-events-none"
-              style={{
-                top: '-20px',
-                left: '-20px',
-                right: '-20px',
-                height: 'var(--fe)',
-                backgroundImage: `url(${GATE_IMG})`,
-                backgroundSize: 'var(--sw) calc(var(--fe) * 12)',
-                backgroundPosition: 'center top',
-                backgroundRepeat: 'no-repeat',
-                transform: 'scaleY(-1)',
-                filter: 'blur(10px)',
-              }}
-            ></div>
-            <div
-              className="absolute pointer-events-none"
-              style={{
-                bottom: '-20px',
-                left: '-20px',
-                right: '-20px',
-                height: 'var(--fe)',
-                backgroundImage: `url(${GATE_IMG})`,
-                backgroundSize: 'var(--sw) calc(var(--fe) * 12)',
-                backgroundPosition: 'center bottom',
-                backgroundRepeat: 'no-repeat',
-                transform: 'scaleY(-1)',
-                filter: 'blur(10px)',
-              }}
-            ></div>
-          </>
-        )}
-
         <div
-          ref={stageRef}
-          className="absolute"
+          ref={sceneRef}
+          onClick={handleOpen}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleOpen();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label="Tap to open the invitation"
+          className="fixed inset-0 z-50 overflow-hidden cursor-pointer"
           style={{
-            left: 'calc(50% - var(--sw) / 2)',
-            top: 'calc(50% - var(--sh) / 2)',
-            width: 'var(--sw)',
-            height: 'var(--sh)',
-            perspective: '1500px',
-            perspectiveOrigin: '50% 52%',
+            display: skipIntro ? 'none' : undefined,
+            touchAction: 'none',
+            '--sw': 'max(100vw, min(266.67svh, 312.5vw))',
+            '--sh': 'calc(var(--sw) * 0.375)',
+            '--fh': 'calc((100svh - var(--sh)) / 2)',
+            '--fe': 'calc(var(--fh) + var(--sh) * 0.09 + 20px)',
           }}
         >
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              ...gateBg,
-              clipPath: 'url(#gate-hole)',
-              ...(narrow
-                ? {
-                    WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%)',
-                    maskImage: 'linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%)',
-                  }
-                : null),
-            }}
-          ></div>
+          {narrow && (
+            <>
+              <div
+                className="absolute pointer-events-none"
+                style={{
+                  top: '-20px',
+                  left: '-20px',
+                  right: '-20px',
+                  height: 'var(--fe)',
+                  backgroundImage: `url(${resolvedUrls.door})`,
+                  backgroundSize: 'var(--sw) calc(var(--fe) * 12)',
+                  backgroundPosition: 'center top',
+                  backgroundRepeat: 'no-repeat',
+                  transform: 'scaleY(-1)',
+                  filter: 'blur(10px)',
+                }}
+              ></div>
+              <div
+                className="absolute pointer-events-none"
+                style={{
+                  bottom: '-20px',
+                  left: '-20px',
+                  right: '-20px',
+                  height: 'var(--fe)',
+                  backgroundImage: `url(${resolvedUrls.door})`,
+                  backgroundSize: 'var(--sw) calc(var(--fe) * 12)',
+                  backgroundPosition: 'center bottom',
+                  backgroundRepeat: 'no-repeat',
+                  transform: 'scaleY(-1)',
+                  filter: 'blur(10px)',
+                }}
+              ></div>
+            </>
+          )}
 
           <div
-            ref={leftLeafRef}
-            className="absolute inset-0 pointer-events-none"
+            ref={stageRef}
+            className="absolute"
             style={{
-              ...gateBg,
-              clipPath: 'url(#gate-left)',
-              transformOrigin: `${LEFT_HINGE} 50%`,
-              backfaceVisibility: 'hidden',
-              willChange: 'transform',
+              left: 'calc(50% - var(--sw) / 2)',
+              top: 'calc(50% - var(--sh) / 2)',
+              width: 'var(--sw)',
+              height: 'var(--sh)',
+              perspective: '1500px',
+              perspectiveOrigin: '50% 52%',
             }}
-          ></div>
-
-          <div
-            ref={rightLeafRef}
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              ...gateBg,
-              clipPath: 'url(#gate-right)',
-              transformOrigin: `${RIGHT_HINGE} 50%`,
-              backfaceVisibility: 'hidden',
-              willChange: 'transform',
-            }}
-          ></div>
-
-          <div
-            className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
-            style={{ left: pct(SEAM_X, GATE_W), top: pct(LOCK_Y, GATE_H) }}
           >
-            <button
-              ref={stampBtnRef}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleOpen();
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                ...gateBg,
+                clipPath: 'url(#gate-hole)',
+                ...(narrow
+                  ? {
+                      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%)',
+                      maskImage: 'linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%)',
+                    }
+                  : null),
               }}
-              aria-label="Tap to open"
-              className="relative flex items-center justify-center cursor-pointer bg-transparent border-none p-0"
-              style={{ width: 'clamp(52px, calc(var(--sw) * 0.036), 92px)', aspectRatio: '1' }}
-            >
-              <span ref={(el) => { radarPulsesRef.current[0] = el; }} className="radar-pulse absolute inset-0 rounded-full border-2 border-amber-600/70 opacity-80 pointer-events-none"></span>
-              <span ref={(el) => { radarPulsesRef.current[1] = el; }} className="radar-pulse absolute inset-0 rounded-full border-2 border-amber-500/70 opacity-80 pointer-events-none"></span>
-              <span ref={(el) => { radarPulsesRef.current[2] = el; }} className="radar-pulse absolute inset-0 rounded-full border-2 border-amber-400/60 opacity-80 pointer-events-none"></span>
+            ></div>
 
-              <img
-                src="/images/stamp-1.png"
-                className="stamp-seal w-full h-full rounded-full object-cover relative z-10 shadow-lg"
-                alt="Stamp Seal"
-                draggable={false}
-              />
-            </button>
+            <div
+              ref={leftLeafRef}
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                ...gateBg,
+                clipPath: 'url(#gate-left)',
+                transformOrigin: `${LEFT_HINGE} 50%`,
+                backfaceVisibility: 'hidden',
+                willChange: 'transform',
+              }}
+            ></div>
+
+            <div
+              ref={rightLeafRef}
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                ...gateBg,
+                clipPath: 'url(#gate-right)',
+                transformOrigin: `${RIGHT_HINGE} 50%`,
+                backfaceVisibility: 'hidden',
+                willChange: 'transform',
+              }}
+            ></div>
+
+            <div
+              className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
+              style={{ left: pct(SEAM_X, GATE_W), top: pct(LOCK_Y, GATE_H) }}
+            >
+              <button
+                ref={stampBtnRef}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpen();
+                }}
+                aria-label="Tap to open"
+                className="relative flex items-center justify-center cursor-pointer bg-transparent border-none p-0"
+                style={{ width: 'clamp(52px, calc(var(--sw) * 0.036), 92px)', aspectRatio: '1' }}
+              >
+                <span ref={(el) => { radarPulsesRef.current[0] = el; }} className="radar-pulse absolute inset-0 rounded-full border-2 border-amber-600/70 opacity-80 pointer-events-none"></span>
+                <span ref={(el) => { radarPulsesRef.current[1] = el; }} className="radar-pulse absolute inset-0 rounded-full border-2 border-amber-500/70 opacity-80 pointer-events-none"></span>
+                <span ref={(el) => { radarPulsesRef.current[2] = el; }} className="radar-pulse absolute inset-0 rounded-full border-2 border-amber-400/60 opacity-80 pointer-events-none"></span>
+
+                <Pic
+                  name="stamp-1"
+                  className="stamp-seal w-full h-full rounded-full object-cover relative z-10 shadow-lg"
+                  alt="Stamp Seal"
+                  draggable={false}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div
+            ref={labelRef}
+            className="absolute inset-x-0 flex flex-col items-center pointer-events-none z-20"
+            style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 5svh)' }}
+          >
+            <span className="px-5 py-2 rounded-full bg-white/70 backdrop-blur-md text-[11px] uppercase tracking-[0.35em] text-[#5A3E2B] font-semibold shadow-lg">
+              Tap to Open
+            </span>
+            <span className="text-[11px] italic font-serif text-[#5A3E2B] mt-2 drop-shadow-[0_1px_2px_rgba(255,255,255,0.9)]">
+              An Invitation Awaits
+            </span>
           </div>
         </div>
-
-        <div
-          ref={labelRef}
-          className="absolute inset-x-0 flex flex-col items-center pointer-events-none z-20"
-          style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 5svh)' }}
-        >
-          <span className="px-5 py-2 rounded-full bg-white/70 backdrop-blur-md text-[11px] uppercase tracking-[0.35em] text-[#5A3E2B] font-semibold shadow-lg">
-            Tap to Open
-          </span>
-          <span className="text-[11px] italic font-serif text-[#5A3E2B] mt-2 drop-shadow-[0_1px_2px_rgba(255,255,255,0.9)]">
-            An Invitation Awaits
-          </span>
-        </div>
-      </div>
       )}
 
       {!eventsOver && (
-      <>
-      {/* ============ SECTION 1: INVITATION CARD ============ */}
-      <section
-        data-bgx={BG_POS.hero}
-        className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 pb-[14svh]"
-        style={{ minHeight: '100svh' }}
-      >
-        <div className={`intro-card ${GLASS} opacity-0 w-full max-w-sm px-6 sm:px-8 py-10 text-center flex flex-col items-center gap-4`}>
-          <h1 className="text-xl md:text-2xl font-serif text-[#7E5C38] tracking-wide" style={{ direction: 'rtl' }}>
-            بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
-          </h1>
-          <span className="text-sm md:text-base font-serif text-[#5C4532] italic leading-relaxed block px-2 sm:px-4" style={{ direction: 'rtl' }}>
-            بَارَكَ ٱللَّهُ لَكِ وَبَارَكَ عَلَيْكِ وَجَمَعَ بَيْنَكُمَا فِي خَيْرٍ
-          </span>
-          <span className="intro-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">
-            The Wedding Celebration
-          </span>
-          <p className="intro-item text-xs text-[#4A3B2C] italic font-serif">
-            You are cordially invited to celebrate the union of
-          </p>
-          <div className="intro-item text-3xl font-serif font-bold text-[#2C1D12] tracking-wide flex items-center justify-center gap-3">
-            <span>Mohsin</span>
-            <span className="text-[#8A6232] font-light italic text-2xl">&amp;</span>
-            <span>Iqra</span>
-          </div>
-          <div className="intro-item w-16 h-[1px] bg-[#7E5C38]/50"></div>
-
-          <p className="intro-item text-[11px] text-[#5A3E2B] italic font-serif">
-            Your presence will make our day complete.
-          </p>
-        </div>
-
-        <div className="intro-item mt-6 flex flex-col items-center animate-bounce">
-          <span className="text-[10px] uppercase tracking-[0.3em] text-[#3A2B1C] font-sans font-semibold drop-shadow-[0_1px_2px_rgba(255,255,255,0.8)]">
-            Scroll Down
-          </span>
-          <span className="text-lg text-[#3A2B1C] mt-1">↓</span>
-        </div>
-      </section>
-
-      {/* ============ SECTION 2: SAVE THE DATE ============ */}
-      <section
-        id="date-section"
-        data-bgx={BG_POS.date}
-        className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20"
-      >
-        <div className={`${GLASS} w-full max-w-sm p-5 sm:p-6 flex flex-col items-center text-center gap-6`}>
-          <div className="save-item">
-            <span className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">SAVE THE DATE</span>
-            <h2 className="text-2xl sm:text-3xl font-serif font-bold text-[#2C1D12] mt-1">Mark Your Calendar</h2>
-            <div className="w-12 h-[1px] bg-[#7E5C38]/50 mx-auto mt-2"></div>
-          </div>
-
-          <div className="save-item w-full">
-            <ScratchCard>
-              <span className="text-[11px] uppercase tracking-[0.3em] text-[#4A3B2C] font-medium">Sunday &amp; Monday</span>
-              <span className="font-serif text-5xl font-bold leading-tight my-1 bg-gradient-to-b from-[#B8860B] to-[#6E4E2B] bg-clip-text text-transparent">
-                29 · 30
+        <>
+          {/* ============ SECTION 1: INVITATION CARD ============ */}
+          <section
+            data-bgx={BG_POS.hero}
+            className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 pb-[14svh]"
+            style={{ minHeight: '100svh' }}
+          >
+            <div className={`intro-card ${GLASS} opacity-0 w-full max-w-sm px-6 sm:px-8 py-10 text-center flex flex-col items-center gap-4`}>
+              <h1 className="text-xl md:text-2xl font-serif text-[#7E5C38] tracking-wide" style={{ direction: 'rtl' }}>
+                بِسْمِ ٱللَّٰهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
+              </h1>
+              <span className="text-sm md:text-base font-serif text-[#5C4532] italic leading-relaxed block px-2 sm:px-4" style={{ direction: 'rtl' }}>
+                بَارَكَ ٱللَّهُ لَكِ وَبَارَكَ عَلَيْكِ وَجَمَعَ بَيْنَكُمَا فِي خَيْرٍ
               </span>
-              <span className="text-xs uppercase tracking-[0.25em] text-[#4A3B2C] font-medium">November 2026</span>
-            </ScratchCard>
-            <p className="text-[10px] text-[#5A3E2B] italic font-serif mt-2">Scratch the gold to reveal the date ✦</p>
-          </div>
-
-          <div className="save-item w-full">
-            {eventsOver ? (
-              <div className="py-3 text-center">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">Celebrations Concluded</p>
-                <p className="font-serif italic text-sm text-[#2C1D12] mt-1">Thank you for your blessings</p>
+              <span className="intro-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">
+                The Wedding Celebration
+              </span>
+              <p className="intro-item text-xs text-[#4A3B2C] italic font-serif">
+                You are cordially invited to celebrate the union of
+              </p>
+              <div className="intro-item text-3xl font-serif font-bold text-[#2C1D12] tracking-wide flex items-center justify-center gap-3">
+                <span>Mohsin</span>
+                <span className="text-[#8A6232] font-light italic text-2xl">&amp;</span>
+                <span>Iqra</span>
               </div>
-            ) : phase === 'WALIMA_LIVE' ? (
-              <div className="py-3 text-center">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">Walima Is Happening Now</p>
-                <p className="font-serif italic text-sm text-[#2C1D12] mt-1">Open Previews ✦ to join the live celebration</p>
-              </div>
-            ) : (
-              <>
-                <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold mb-2">
-                  Counting down to the {cdLabel}
-                </p>
-                <Countdown target={cdTarget} />
-              </>
-            )}
-          </div>
+              <div className="intro-item w-16 h-[1px] bg-[#7E5C38]/50"></div>
 
-          {!eventsOver && (
-            <button
-              onClick={downloadIcs}
-              className="save-item flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-gradient-to-r from-[#5A3E2B] to-[#7E5C38] text-white text-xs uppercase tracking-widest rounded-full shadow-md hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 font-sans font-medium"
+              <p className="intro-item text-[11px] text-[#5A3E2B] italic font-serif">
+                Your presence will make our day complete.
+              </p>
+            </div>
+
+            <div className="intro-item mt-6 flex flex-col items-center animate-bounce">
+              <span className="text-[10px] uppercase tracking-[0.3em] text-[#3A2B1C] font-sans font-semibold drop-shadow-[0_1px_2px_rgba(255,255,255,0.8)]">
+                Scroll Down
+              </span>
+              <span className="text-lg text-[#3A2B1C] mt-1">↓</span>
+            </div>
+          </section>
+
+          {/* ============ SECTION 2: SAVE THE DATE ============ */}
+          <section
+            id="date-section"
+            data-bgx={BG_POS.date}
+            className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20"
+          >
+            <div className={`${GLASS} w-full max-w-sm p-5 sm:p-6 flex flex-col items-center text-center gap-6`}>
+              <div className="save-item">
+                <span className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">SAVE THE DATE</span>
+                <h2 className="text-2xl sm:text-3xl font-serif font-bold text-[#2C1D12] mt-1">Mark Your Calendar</h2>
+                <div className="w-12 h-[1px] bg-[#7E5C38]/50 mx-auto mt-2"></div>
+              </div>
+
+              <div className="save-item w-full">
+                <ScratchCard>
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-[#4A3B2C] font-medium">Sunday &amp; Monday</span>
+                  <span className="font-serif text-5xl font-bold leading-tight my-1 bg-gradient-to-b from-[#B8860B] to-[#6E4E2B] bg-clip-text text-transparent">
+                    29 · 30
+                  </span>
+                  <span className="text-xs uppercase tracking-[0.25em] text-[#4A3B2C] font-medium">November 2026</span>
+                </ScratchCard>
+                <p className="text-[10px] text-[#5A3E2B] italic font-serif mt-2">Scratch the gold to reveal the date ✦</p>
+              </div>
+
+              <div className="save-item w-full">
+                {eventsOver ? (
+                  <div className="py-3 text-center">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">Celebrations Concluded</p>
+                    <p className="font-serif italic text-sm text-[#2C1D12] mt-1">Thank you for your blessings</p>
+                  </div>
+                ) : phase === 'WALIMA_LIVE' ? (
+                  <div className="py-3 text-center">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">Walima Is Happening Now</p>
+                    <p className="font-serif italic text-sm text-[#2C1D12] mt-1">Open Previews ✦ to join the live celebration</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold mb-2">
+                      Counting down to the {cdLabel}
+                    </p>
+                    <Countdown target={cdTarget} />
+                  </>
+                )}
+              </div>
+
+              {!eventsOver && (
+                <button
+                  onClick={downloadIcs}
+                  className="save-item flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-gradient-to-r from-[#5A3E2B] to-[#7E5C38] text-white text-xs uppercase tracking-widest rounded-full shadow-md hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 font-sans font-medium"
+                >
+                  <CalendarIcon />
+                  Add to Calendar
+                </button>
+              )}
+            </div>
+          </section>
+
+          {/* ============ SECTION 3: THE FAMILIES ============ */}
+          <section
+            id="families-section"
+            data-bgx={BG_POS.families}
+            className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20 overflow-hidden"
+          >
+            <div ref={topFlowerRef} className="absolute top-0 right-0 w-[160px] sm:w-[220px] md:w-[280px] opacity-0 pointer-events-none z-10">
+              <Pic name="left" className="w-full h-full object-contain rotate-180" alt="Corner Flower Top" />
+            </div>
+
+            <div ref={bottomFlowerRef} className="absolute bottom-0 left-0 w-[160px] sm:w-[220px] md:w-[280px] opacity-0 pointer-events-none z-10">
+              <Pic name="left" className="w-full h-full object-contain" alt="Corner Flower Bottom" />
+            </div>
+
+            <div
+              ref={familyContentRef}
+              className={`${GLASS} w-full max-w-sm px-6 sm:px-8 py-10 flex flex-col items-center text-center gap-5 z-20 opacity-0`}
             >
-              <CalendarIcon />
-              Add to Calendar
-            </button>
-          )}
-        </div>
-      </section>
+              <span className="family-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">THE FAMILIES</span>
 
-      {/* ============ SECTION 3: THE FAMILIES ============ */}
-      <section
-        id="families-section"
-        data-bgx={BG_POS.families}
-        className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20 overflow-hidden"
-      >
-        <div ref={topFlowerRef} className="absolute top-0 right-0 w-[160px] sm:w-[220px] md:w-[280px] opacity-0 pointer-events-none z-10">
-          <Pic name="left" className="w-full h-full object-contain rotate-180" alt="Corner Flower Top" />
-        </div>
+              <div className="space-y-6 w-full">
+                <div className="family-item space-y-1">
+                  <h3 className="font-serif text-2xl text-[#2C1D12] font-medium tracking-wide">Mohsin</h3>
+                  <p className="text-[11px] text-[#5A3E2B] uppercase tracking-widest font-semibold">Son of</p>
+                  <p className="text-xs text-[#2F2318] font-serif">Mr. Muhammad Islam &amp; Mrs. Rehana Kosar</p>
+                </div>
 
-        <div ref={bottomFlowerRef} className="absolute bottom-0 left-0 w-[160px] sm:w-[220px] md:w-[280px] opacity-0 pointer-events-none z-10">
-          <Pic name="left" className="w-full h-full object-contain" alt="Corner Flower Bottom" />
-        </div>
+                <div className="family-item text-[#7E5C38] font-serif italic text-lg">&amp;</div>
 
-        <div
-          ref={familyContentRef}
-          className={`${GLASS} w-full max-w-sm px-6 sm:px-8 py-10 flex flex-col items-center text-center gap-5 z-20 opacity-0`}
-        >
-          <span className="family-item text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">THE FAMILIES</span>
-
-          <div className="space-y-6 w-full">
-            <div className="family-item space-y-1">
-              <h3 className="font-serif text-2xl text-[#2C1D12] font-medium tracking-wide">Mohsin</h3>
-              <p className="text-[11px] text-[#5A3E2B] uppercase tracking-widest font-semibold">Son of</p>
-              <p className="text-xs text-[#2F2318] font-serif">Mr. Muhammad Islam &amp; Mrs. Rehana Kosar</p>
-            </div>
-
-            <div className="family-item text-[#7E5C38] font-serif italic text-lg">&amp;</div>
-
-            <div className="family-item space-y-1">
-              <h3 className="font-serif text-2xl text-[#2C1D12] font-medium tracking-wide">Iqra</h3>
-              <p className="text-[11px] text-[#5A3E2B] uppercase tracking-widest font-semibold">Daughter of</p>
-              <p className="text-xs text-[#2F2318] font-serif">Mr. Shokat &amp; Mrs. Nusrat</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ============ SECTION 4: THE CELEBRATIONS ============ */}
-      <section
-        id="celebrations-section"
-        data-bgx={BG_POS.celebrations}
-        className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20 gap-10"
-      >
-        <div className={`celeb-head ${GLASS} px-8 py-4 text-center z-20`}>
-          <span className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">SCHEDULE &amp; VENUES</span>
-          <h2 className="text-2xl sm:text-3xl font-serif font-bold text-[#2C1D12] mt-1">The Celebrations</h2>
-          <div className="w-12 h-[1px] bg-[#7E5C38]/50 mx-auto mt-2"></div>
-        </div>
-
-        <div className="w-full max-w-md flex flex-col gap-10 z-20 items-center">
-          {celebrations.map((c) => (
-            <div key={c.key} className="celeb-card w-[95%] max-w-[360px] relative opacity-0">
-              <div className="rounded-t-[140px] rounded-b-3xl p-[3px] bg-gradient-to-b from-[#D4AF37] via-[#F3E2A9] to-[#B8860B] shadow-[0_20px_50px_rgba(90,62,43,0.28)]">
-                <div className="relative overflow-hidden rounded-t-[137px] rounded-b-[21px] bg-gradient-to-b from-white/45 to-white/20 backdrop-blur-md px-5 sm:px-6 pt-12 pb-7 text-center flex flex-col items-center min-h-[440px]">
-                  <div className="absolute inset-2 rounded-t-[130px] rounded-b-2xl border border-[#D4AF37]/50 pointer-events-none"></div>
-
-                  <div className="card-shine pointer-events-none absolute top-0 -left-1/2 h-full w-1/3 -skew-x-12 bg-gradient-to-r from-transparent via-white/70 to-transparent z-10"></div>
-
-                  <div className="reveal-item flex flex-col items-center gap-2">
-                    <span className="card-star text-[#B8860B] text-base leading-none">✦</span>
-                    <span className="text-[10px] uppercase tracking-[0.35em] text-[#5A3E2B] font-semibold">{c.title}</span>
-                    {(c.key === 'barat' ? phase === 'BETWEEN' || phase === 'WALIMA_LIVE' || phase === 'POST' : phase === 'POST') && (
-                      <span className="mt-1 rounded-full border border-[#B8860B]/60 bg-white/40 px-3 py-0.5 text-[9px] uppercase tracking-[0.2em] text-[#6E4E2B] font-semibold">
-                        {c.title.charAt(0) + c.title.slice(1).toLowerCase()} Celebrated ✓
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="reveal-item mt-4 flex flex-col items-center">
-                    <span className="text-[11px] uppercase tracking-[0.3em] text-[#4A3B2C] font-medium">{c.day}</span>
-                    <span
-                      data-value={c.date}
-                      className="date-num text-7xl font-serif font-bold leading-none my-1 bg-gradient-to-b from-[#B8860B] to-[#6E4E2B] bg-clip-text text-transparent"
-                    >
-                      {c.date}
-                    </span>
-                    <span className="text-xs uppercase tracking-[0.25em] text-[#4A3B2C] font-medium">{c.month}</span>
-                  </div>
-
-                  <div className="reveal-item flex items-center gap-2 my-5 w-full px-6">
-                    <span className="h-[1px] flex-1 bg-gradient-to-r from-transparent to-[#B8860B]/70"></span>
-                    <span className="text-[#B8860B] text-[10px]">◆</span>
-                    <span className="h-[1px] flex-1 bg-gradient-to-l from-transparent to-[#B8860B]/70"></span>
-                  </div>
-
-                  <div className="space-y-2 w-full">
-                    <p className="reveal-item flex items-center justify-center gap-1.5 text-xs font-semibold text-[#4A2E12]">
-                      <ClockIcon />
-                      {c.time}
-                    </p>
-                    <h3 className="reveal-item font-serif font-bold text-xl text-[#2C1D12]">{c.venue}</h3>
-                    <p className="reveal-item flex items-start justify-center gap-1.5 text-[11px] text-[#2F2318] px-2 sm:px-4 leading-relaxed">
-                      <span className="mt-[2px] text-[#8A6232] shrink-0"><PinIcon /></span>
-                      <span>{c.address}</span>
-                    </p>
-                  </div>
-
-                  <div className="reveal-item w-full mt-auto pt-6 relative z-20">
-                    <a
-                      href={c.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-block w-full py-2.5 px-4 bg-gradient-to-r from-[#5A3E2B] to-[#7E5C38] text-white text-xs uppercase tracking-widest rounded-full shadow-md hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 font-sans font-medium text-center"
-                    >
-                      Directions
-                    </a>
-                  </div>
+                <div className="family-item space-y-1">
+                  <h3 className="font-serif text-2xl text-[#2C1D12] font-medium tracking-wide">Iqra</h3>
+                  <p className="text-[11px] text-[#5A3E2B] uppercase tracking-widest font-semibold">Daughter of</p>
+                  <p className="text-xs text-[#2F2318] font-serif">Mr. Shokat &amp; Mrs. Nusrat</p>
                 </div>
               </div>
             </div>
-          ))}
-        </div>
-      </section>
+          </section>
 
-      </>
+          {/* ============ SECTION 4: THE CELEBRATIONS ============ */}
+          <section
+            id="celebrations-section"
+            data-bgx={BG_POS.celebrations}
+            className="relative z-10 min-h-screen w-full flex flex-col justify-center items-center px-4 py-20 gap-10"
+          >
+            <div className={`celeb-head ${GLASS} px-8 py-4 text-center z-20`}>
+              <span className="text-[10px] uppercase tracking-[0.3em] text-[#5A3E2B] font-semibold">SCHEDULE &amp; VENUES</span>
+              <h2 className="text-2xl sm:text-3xl font-serif font-bold text-[#2C1D12] mt-1">The Celebrations</h2>
+              <div className="w-12 h-[1px] bg-[#7E5C38]/50 mx-auto mt-2"></div>
+            </div>
+
+            <div className="w-full max-w-md flex flex-col gap-10 z-20 items-center">
+              {celebrations.map((c) => (
+                <div key={c.key} className="celeb-card w-[95%] max-w-[360px] relative opacity-0">
+                  <div className="rounded-t-[140px] rounded-b-3xl p-[3px] bg-gradient-to-b from-[#D4AF37] via-[#F3E2A9] to-[#B8860B] shadow-[0_20px_50px_rgba(90,62,43,0.28)]">
+                    <div className="relative overflow-hidden rounded-t-[137px] rounded-b-[21px] bg-gradient-to-b from-white/45 to-white/20 backdrop-blur-md px-5 sm:px-6 pt-12 pb-7 text-center flex flex-col items-center min-h-[440px]">
+                      <div className="absolute inset-2 rounded-t-[130px] rounded-b-2xl border border-[#D4AF37]/50 pointer-events-none"></div>
+
+                      <div className="card-shine pointer-events-none absolute top-0 -left-1/2 h-full w-1/3 -skew-x-12 bg-gradient-to-r from-transparent via-white/70 to-transparent z-10"></div>
+
+                      <div className="reveal-item flex flex-col items-center gap-2">
+                        <span className="card-star text-[#B8860B] text-base leading-none">✦</span>
+                        <span className="text-[10px] uppercase tracking-[0.35em] text-[#5A3E2B] font-semibold">{c.title}</span>
+                        {(c.key === 'barat' ? phase === 'BETWEEN' || phase === 'WALIMA_LIVE' || phase === 'POST' : phase === 'POST') && (
+                          <span className="mt-1 rounded-full border border-[#B8860B]/60 bg-white/40 px-3 py-0.5 text-[9px] uppercase tracking-[0.2em] text-[#6E4E2B] font-semibold">
+                            {c.title.charAt(0) + c.title.slice(1).toLowerCase()} Celebrated ✓
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="reveal-item mt-4 flex flex-col items-center">
+                        <span className="text-[11px] uppercase tracking-[0.3em] text-[#4A3B2C] font-medium">{c.day}</span>
+                        <span
+                          data-value={c.date}
+                          className="date-num text-7xl font-serif font-bold leading-none my-1 bg-gradient-to-b from-[#B8860B] to-[#6E4E2B] bg-clip-text text-transparent"
+                        >
+                          {c.date}
+                        </span>
+                        <span className="text-xs uppercase tracking-[0.25em] text-[#4A3B2C] font-medium">{c.month}</span>
+                      </div>
+
+                      <div className="reveal-item flex items-center gap-2 my-5 w-full px-6">
+                        <span className="h-[1px] flex-1 bg-gradient-to-r from-transparent to-[#B8860B]/70"></span>
+                        <span className="text-[#B8860B] text-[10px]">◆</span>
+                        <span className="h-[1px] flex-1 bg-gradient-to-l from-transparent to-[#B8860B]/70"></span>
+                      </div>
+
+                      <div className="space-y-2 w-full">
+                        <p className="reveal-item flex items-center justify-center gap-1.5 text-xs font-semibold text-[#4A2E12]">
+                          <ClockIcon />
+                          {c.time}
+                        </p>
+                        <h3 className="reveal-item font-serif font-bold text-xl text-[#2C1D12]">{c.venue}</h3>
+                        <p className="reveal-item flex items-start justify-center gap-1.5 text-[11px] text-[#2F2318] px-2 sm:px-4 leading-relaxed">
+                          <span className="mt-[2px] text-[#8A6232] shrink-0"><PinIcon /></span>
+                          <span>{c.address}</span>
+                        </p>
+                      </div>
+
+                      <div className="reveal-item w-full mt-auto pt-6 relative z-20">
+                        <a
+                          href={c.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block w-full py-2.5 px-4 bg-gradient-to-r from-[#5A3E2B] to-[#7E5C38] text-white text-xs uppercase tracking-widest rounded-full shadow-md hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300 font-sans font-medium text-center"
+                        >
+                          Directions
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
       )}
 
       {/* ============ EVENTS CONCLUDED ============ */}
@@ -1310,15 +1327,13 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
 
 /* =====================================================================
    BACKGROUND AUDIO + SOUND TOGGLE
-   Audio Root level par rehta hai: pastel site aur live mode ke beech switch par bhi chalta rehta hai.
-   YouTube IFrame API (postMessage): mute / unMute / playVideo, aur asli state wapas sunte hain.
    ===================================================================== */
 const YT_ID = 'RpE-hVumiDI';
 const YT_ORIGIN = 'https://www.youtube.com';
 
 function useBackgroundAudio() {
   const iframeRef = useRef(null);
-  const [started, setStarted] = useState(false); // iframe mount hua (user gesture ke baad)
+  const [started, setStarted] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
 
@@ -1348,7 +1363,6 @@ function useBackgroundAudio() {
       if (typeof info.muted === 'boolean') setMuted(info.muted);
     };
     window.addEventListener('message', onMsg);
-    // Player ready hone tak "listening" handshake dohrao (max ~15s)
     const listen = () => {
       const w = iframeRef.current && iframeRef.current.contentWindow;
       if (w) w.postMessage(JSON.stringify({ event: 'listening', id: 'bg-audio', channel: 'widget' }), YT_ORIGIN);
@@ -1358,7 +1372,6 @@ function useBackgroundAudio() {
       if (heard || tries > 15) clearInterval(id);
       else listen();
     }, 1000);
-    // Agar API se koi state na aaye (blocker wagera), maan lo music chal raha hai
     const fallback = setTimeout(() => {
       if (!heard) setPlaying(true);
     }, 4000);
@@ -1434,38 +1447,33 @@ function SoundToggle({ on, theme, onClick }) {
 
 /* =====================================================================
    ROOT
-   - Event ka din: seedha Live experience (auto)
-   - Auto-opened live experience event ke end (10 PM PKT) par khud pastel site par aa jata hai
-   - Previews menu se kholi hui experience (replay) user ke Exit Preview tak rehti hai
    ===================================================================== */
 function RootInner() {
-  usePhase(); // phase badalne par re-render (App ko currentPhase() milta hai)
-  const [mode, setMode] = useState(defaultMode); // null | 'barat' | 'walima'
+  usePhase();
+  const [mode, setMode] = useState(defaultMode);
   const [auto, setAuto] = useState(() => !getPreview() && defaultMode() !== null);
   const [skipIntro, setSkipIntro] = useState(false);
   const [unlockTick, setUnlockTick] = useState(0);
-  const dismissed = useRef(new Set()); // jo live experiences user ne khud band kar di: auto dobara na khulen
+  const dismissed = useRef(new Set());
   const audio = useBackgroundAudio();
 
   const leaveLive = useCallback(() => {
-    clearPreview(); // ?preview param + module state dono saaf
+    clearPreview();
     setSkipIntro(true);
     setAuto(false);
     setMode(null);
   }, []);
 
-  // User ka khud ka Exit: us event ko "dismissed" mark karo
   const exitManual = useCallback(() => {
     if (mode) dismissed.current.add(mode);
     leaveLive();
   }, [mode, leaveLive]);
 
   const openPreview = useCallback((kind) => {
-    setAuto(false); // user ne khud khola: auto-exit nahi
+    setAuto(false);
     setMode(kind);
   }, []);
 
-  // 1) Event ke end (10 PM PKT) par auto-opened live mode se bahar
   useEffect(() => {
     if (!mode || !auto) return undefined;
     const end = liveEndOf(mode);
@@ -1484,7 +1492,6 @@ function RootInner() {
     };
   }, [mode, auto, leaveLive]);
 
-  // 2) Pastel site par hon to unlock (12 AM PKT) par khud live mode mein dakhil (bina refresh)
   useEffect(() => {
     if (mode || getPreview()) return undefined;
     const tryEnter = () => {
@@ -1500,7 +1507,6 @@ function RootInner() {
     const next = [BARAT_UNLOCK, WALIMA_UNLOCK].find((t) => t > now);
     let id;
     if (next != null) {
-      // timeout cap ~24 din: pehle fire par agle unlock ke liye dobara schedule
       id = setTimeout(() => {
         tryEnter();
         setUnlockTick((n) => n + 1);
@@ -1534,11 +1540,9 @@ function RootInner() {
       {mode ? (
         <LiveEventExperience key={mode} kind={mode} />
       ) : (
-        // currentPhase() render par taza: auto-exit ke foran baad POST layout (1s ka purana phase nahi)
         <App phase={currentPhase()} skipIntro={skipIntro} onPreview={openPreview} onGateOpen={audio.start} />
       )}
 
-      {/* Background audio: Root level, mode switch par bhi chalta rehta hai */}
       {audio.started && (
         <iframe
           ref={audio.iframeRef}
@@ -1559,7 +1563,6 @@ function RootInner() {
 }
 
 export default function Root() {
-  // Pehle server clock se sync (max ~1.5s), taake galat device clock se unlock / live galat na ho
   const [clockReady, setClockReady] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -1571,6 +1574,9 @@ export default function Root() {
     };
   }, []);
 
-  if (!clockReady) return <div className="fixed inset-0 bg-[#F4EFEB]" />;
+  if (!clockReady) {
+    const isLiveBoot = defaultMode() !== null;
+    return <div className={`fixed inset-0 ${isLiveBoot ? 'bg-[#24040A]' : 'bg-[#F4EFEB]'}`} />;
+  }
   return <RootInner />;
 }
