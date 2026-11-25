@@ -1326,24 +1326,115 @@ function App({ phase, onPreview, skipIntro, onGateOpen }) {
 }
 
 /* =====================================================================
-   BACKGROUND AUDIO + SOUND TOGGLE
+   BACKGROUND AUDIO: ONE persistent native <audio> (iOS-safe) + ONE persistent
+   YouTube iframe fallback. Neither is ever remounted on mode change; tracks are
+   swapped with audio.src / loadVideoById so the iOS user-gesture unlock survives.
    ===================================================================== */
-const YT_ID = 'RpE-hVumiDI';
 const YT_ORIGIN = 'https://www.youtube.com';
 
-function useBackgroundAudio() {
+const TRACKS = {
+  garden: { src: '/audio/garden.mp3', yt: 'RpE-hVumiDI', start: 0 },
+  barat: { src: '/audio/barat.mp3', yt: 'QvSO76Hek3U', start: 45 },
+  walima: { src: '/audio/walima.mp3', yt: 'kw4tT7SCmaY', start: 45 },
+};
+const trackKeyOf = (mode) => (mode === 'barat' || mode === 'walima' ? mode : 'garden');
+
+function useBackgroundAudio(mode) {
+  const audioRef = useRef(null);
   const iframeRef = useRef(null);
+  const key = trackKeyOf(mode);
+  const keyRef = useRef(key);
+  keyRef.current = key;
+
+  const startedRef = useRef(false);
+  const mutedRef = useRef(false);
+  const fallbackRef = useRef(false);
+  const loadedKeyRef = useRef(null);
+
   const [started, setStarted] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMutedState] = useState(false);
+  const [ytInit, setYtInit] = useState(null); // set ONCE when native audio fails; iframe src never changes after
+
+  const setMuted = useCallback((m) => {
+    mutedRef.current = m;
+    setMutedState(m);
+  }, []);
 
   const post = useCallback((func, args = []) => {
     const w = iframeRef.current && iframeRef.current.contentWindow;
     if (w) w.postMessage(JSON.stringify({ event: 'command', func, args }), YT_ORIGIN);
   }, []);
 
+  /* ---------- YouTube fallback ---------- */
+  const playYT = useCallback(
+    (k) => {
+      loadedKeyRef.current = k;
+      post('loadVideoById', [{ videoId: TRACKS[k].yt, startSeconds: TRACKS[k].start }]);
+      if (mutedRef.current) post('mute');
+    },
+    [post]
+  );
+
+  const enableFallback = useCallback((k) => {
+    if (fallbackRef.current) return;
+    fallbackRef.current = true;
+    const a = audioRef.current;
+    if (a) {
+      a.pause();
+      a.removeAttribute('src');
+    }
+    loadedKeyRef.current = k;
+    setYtInit({ id: TRACKS[k].yt, start: TRACKS[k].start });
+  }, []);
+
+  /* ---------- Native <audio> ---------- */
+  const playNative = useCallback(
+    (k) => {
+      const a = audioRef.current;
+      if (!a) return;
+      const t = TRACKS[k];
+      a.muted = mutedRef.current;
+      const seekStart = () => {
+        try {
+          a.currentTime = t.start;
+        } catch {
+          /* metadata not ready yet */
+        }
+      };
+      if (loadedKeyRef.current !== k) {
+        loadedKeyRef.current = k;
+        a.src = t.src;
+        if (t.start > 0) a.addEventListener('loadedmetadata', seekStart, { once: true });
+      } else {
+        seekStart();
+      }
+      const p = a.play();
+      if (p && p.catch) {
+        p.catch((err) => {
+          // NotAllowed = still waiting for a gesture, Abort = a newer load() replaced this one: both are fine.
+          if (err && err.name !== 'NotAllowedError' && err.name !== 'AbortError') enableFallback(k);
+        });
+      }
+    },
+    [enableFallback]
+  );
+
+  const loadTrack = useCallback(
+    (k) => (fallbackRef.current ? playYT(k) : playNative(k)),
+    [playNative, playYT]
+  );
+
+  /* Mode change (gate / PreviewsMenu / Exit Preview / Invitation / PKT schedule) -> swap track at its start offset */
   useEffect(() => {
-    if (!started) return undefined;
+    if (!startedRef.current) return;
+    if (loadedKeyRef.current === key) return;
+    loadTrack(key);
+  }, [key, loadTrack]);
+
+  /* YouTube message bridge (only exists once the fallback iframe is mounted) */
+  useEffect(() => {
+    if (!ytInit) return undefined;
     let heard = false;
     let tries = 0;
     const onMsg = (e) => {
@@ -1359,7 +1450,10 @@ function useBackgroundAudio() {
       const info = d && d.info;
       if (!info) return;
       heard = true;
-      if (typeof info.playerState === 'number') setPlaying(info.playerState === 1 || info.playerState === 3);
+      if (typeof info.playerState === 'number') {
+        setPlaying(info.playerState === 1 || info.playerState === 3);
+        if (info.playerState === 0) playYT(keyRef.current); // ended -> restart at 45s (or 0s for garden)
+      }
       if (typeof info.muted === 'boolean') setMuted(info.muted);
     };
     window.addEventListener('message', onMsg);
@@ -1380,35 +1474,74 @@ function useBackgroundAudio() {
       clearInterval(id);
       clearTimeout(fallback);
     };
-  }, [started]);
+  }, [ytInit, playYT, setMuted]);
 
+  /* Must be called synchronously from a tap (gate open / sound button) for iOS */
   const start = useCallback(() => {
+    startedRef.current = true;
     setStarted(true);
     setMuted(false);
-  }, []);
+    loadTrack(keyRef.current);
+  }, [loadTrack, setMuted]);
 
   const toggle = useCallback(() => {
-    if (!started) {
+    if (!startedRef.current) {
       start();
       return;
     }
-    if (!playing) {
-      post('playVideo');
-      post('unMute');
-      setMuted(false);
+    if (fallbackRef.current) {
+      if (!playing) {
+        post('playVideo');
+        post('unMute');
+        setMuted(false);
+      } else if (mutedRef.current) {
+        post('unMute');
+        post('setVolume', [100]);
+        setMuted(false);
+      } else {
+        post('mute');
+        setMuted(true);
+      }
       return;
     }
-    if (muted) {
-      post('unMute');
-      post('setVolume', [100]);
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) {
+      a.muted = false;
       setMuted(false);
-    } else {
-      post('mute');
-      setMuted(true);
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {});
+      return;
     }
-  }, [started, playing, muted, post, start]);
+    const m = !a.muted;
+    a.muted = m;
+    setMuted(m);
+  }, [start, playing, post, setMuted]);
 
-  return { iframeRef, started, on: started && playing && !muted, start, toggle };
+  const audioProps = {
+    playsInline: true,
+    preload: 'auto',
+    onPlay: () => {
+      if (!fallbackRef.current) setPlaying(true);
+    },
+    onPause: () => {
+      if (!fallbackRef.current) setPlaying(false);
+    },
+    onEnded: () => {
+      // loop at the track's start offset: 45s for Barat/Walima, 0s for Garden
+      const a = audioRef.current;
+      if (!a || fallbackRef.current) return;
+      a.currentTime = TRACKS[keyRef.current].start;
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {});
+    },
+    onError: () => {
+      // local mp3 missing / unsupported -> switch to the single persistent YouTube iframe
+      if (startedRef.current) enableFallback(keyRef.current);
+    },
+  };
+
+  return { audioRef, audioProps, iframeRef, ytInit, started, on: started && playing && !muted, start, toggle };
 }
 
 const SOUND_THEME = {
@@ -1455,7 +1588,7 @@ function RootInner() {
   const [skipIntro, setSkipIntro] = useState(false);
   const [unlockTick, setUnlockTick] = useState(0);
   const dismissed = useRef(new Set());
-  const audio = useBackgroundAudio();
+  const audio = useBackgroundAudio(mode);
 
   const leaveLive = useCallback(() => {
     clearPreview();
@@ -1469,10 +1602,27 @@ function RootInner() {
     leaveLive();
   }, [mode, leaveLive]);
 
-  const openPreview = useCallback((kind) => {
-    setAuto(false);
-    setMode(kind);
-  }, []);
+  const openPreview = useCallback(
+    (kind) => {
+      setAuto(false);
+      setMode(kind);
+      audio.start();
+    },
+    [audio]
+  );
+
+  useEffect(() => {
+    if (audio.started) return undefined;
+    const unlockOnTap = () => {
+      audio.start();
+    };
+    window.addEventListener('pointerdown', unlockOnTap, { once: true });
+    window.addEventListener('keydown', unlockOnTap, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockOnTap);
+      window.removeEventListener('keydown', unlockOnTap);
+    };
+  }, [audio]);
 
   useEffect(() => {
     if (!mode || !auto) return undefined;
@@ -1543,10 +1693,14 @@ function RootInner() {
         <App phase={currentPhase()} skipIntro={skipIntro} onPreview={openPreview} onGateOpen={audio.start} />
       )}
 
-      {audio.started && (
+      {/* ONE persistent native player: never keyed, never unmounted */}
+      <audio ref={audio.audioRef} {...audio.audioProps} />
+
+      {/* ONE persistent YouTube fallback: mounted once if local mp3 fails; tracks switch via loadVideoById */}
+      {audio.ytInit && (
         <iframe
           ref={audio.iframeRef}
-          src={`${YT_ORIGIN}/embed/${YT_ID}?autoplay=1&loop=1&playlist=${YT_ID}&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(
+          src={`${YT_ORIGIN}/embed/${audio.ytInit.id}?autoplay=1&start=${audio.ytInit.start}&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(
             window.location.origin
           )}`}
           allow="autoplay; encrypted-media"

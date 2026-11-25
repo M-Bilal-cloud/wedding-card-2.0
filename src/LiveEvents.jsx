@@ -7,18 +7,17 @@ import { VENUES, mapsLink, useNowTick, liveStage, getPreview } from './eventConf
 gsap.registerPlugin(useGSAP);
 
 /* ---- RED CARPET family-walk end point (1-2% se tweak karo) ---- */
-const CARPET_END_SCALE = 0.5; // family ka final scale
-const CARPET_END_Y = -24; // yPercent: paon red carpet par upar archway ki taraf chadhte hain
+const CARPET_END_SCALE = 0.5;
+const CARPET_END_Y = -24;
 
 /* =====================================================================
    TUNING (images ke hisaab se yahin se adjust karo)
    ===================================================================== */
-// Red carpet scene (ab Walima ki entrance)
 export const LIVE_ASSETS = {
-  barat: ['walima-road', 'walima-car', 'royal-stage-sofa'],
-  walima: ['red-carpet-tunnel', 'family-walk', 'walima-stage'],
+  barat: ['walima-road', 'walima-car', 'jiya-hall-exterior', 'barat-car-arriving', 'royal-stage-sofa'],
+  walima: ['walima-hall', 'sky-lanterns', 'family-walk', 'walima-stage'],
 };
-// Kaunsi entrance animation kis event ki (event ka data / stage / card apne hi rehte hain)
+
 const ENTRANCE = { barat: 'road', walima: 'carpet' };
 const STAGE_IMG = { barat: 'royal-stage-sofa', walima: 'walima-stage' };
 const STAGE_OVERLAY = {
@@ -29,33 +28,51 @@ export const LIVE_WEBP = Object.values(LIVE_ASSETS)
   .flat()
   .map((n) => `/images/${n}.webp`);
 
-const LIVE_LOADER_BG = '#24040A'; // Live mode loader ka background (pehle frame se)
-const PRELOAD_TIMEOUT = 8000; // slow mobile par bhi loader kabhi atakta nahi
+const LIVE_LOADER_BG = '#24040A';
+const PRELOAD_TIMEOUT = 8000;
 
-const ARCH_Y = 84; // red carpet ke archway ka vertical % (burn yahin se phailta hai)
-const CARPET_BG_ZOOM = 1.18; // carpet ka halka zoom
-const WALK = 4.6; // chalne ka waqt (sec)
-const STEP = 0.55; // ek qadam ka waqt (sec)
-const CARPET_START_DELAY = 0.35; // loader fade ke baad shuru
-const CARPET_BURN_AT = 4.0; // burn kab shuru ho (sec)
-const CARPET_BURN_ORIGIN = [0.5, 1 - ARCH_Y / 100]; // aag archway se phailti hai
+const WALIMA_START_DELAY = 0.3;
+const WALIMA_PAN_DUR = 4.2;
+const WALIMA_BURN_AT = 4.05;
+const WALIMA_BURN_ORIGIN = [0.5, 0.36]; // Center-archway / fountain focal point
 
-// Road + car scene (ab Barat ki entrance)
-const ROAD_START_DELAY = 0.35; // loader fade ke baad shuru (Barat jaisa)
-const TITLE_DROP = 0.8; // "WALIMA CELEBRATION" road par girne ka waqt (0 -> 0.8s)
-const CAR_START = 0.8; // car entry shuru
-const CAR_ENTRY = 1.7; // car neeche se aane mein (0.8 -> 2.5s)
-const ROAD_START = 1.6; // road loop yahan se chalna shuru
-const ROAD_RAMP = 1.5; // road raftar 0 se cruise tak
-const TITLE_TOP = 52; // title ki road par vertical jagah (% of screen)
-const ROAD_DRIVE = 4.2; // burn kab shuru ho (sec)
+const SKY_LANTERNS = [
+  { id: 1, left: '7%', top: '52%', size: 'w-8 sm:w-11 md:w-13', delay: 0.15, dur: 3.7, dx: 20, dy: -46, peak: 0.92, rot: -5 },
+  { id: 2, left: '16%', top: '58%', size: 'w-11 sm:w-15 md:w-18', delay: 0.05, dur: 3.9, dx: 28, dy: -54, peak: 1.0, rot: 4 },
+  { id: 3, left: '25%', top: '48%', size: 'w-6 sm:w-8 md:w-10', delay: 0.45, dur: 3.5, dx: 16, dy: -40, peak: 0.85, rot: -3 },
+  { id: 4, left: '33%', top: '56%', size: 'w-9 sm:w-12 md:w-14', delay: 0.25, dur: 3.8, dx: 24, dy: -48, peak: 0.94, rot: 5 },
+  { id: 5, left: '42%', top: '50%', size: 'w-7 sm:w-9 md:w-11', delay: 0.65, dur: 3.4, dx: 18, dy: -42, peak: 0.86, rot: -4 },
+  { id: 6, left: '50%', top: '55%', size: 'w-11 sm:w-14 md:w-17', delay: 0.2, dur: 3.9, dx: 26, dy: -52, peak: 0.98, rot: 3 },
+  { id: 7, left: '59%', top: '47%', size: 'w-6 sm:w-8 md:w-10', delay: 0.75, dur: 3.3, dx: 16, dy: -38, peak: 0.82, rot: -3 },
+  { id: 8, left: '67%', top: '57%', size: 'w-12 sm:w-16 md:w-20', delay: 0.1, dur: 4.0, dx: 30, dy: -55, peak: 1.0, rot: -4 },
+  { id: 9, left: '76%', top: '51%', size: 'w-8 sm:w-11 md:w-13', delay: 0.5, dur: 3.6, dx: 22, dy: -44, peak: 0.9, rot: 4 },
+  { id: 10, left: '85%', top: '56%', size: 'w-10 sm:w-13 md:w-16', delay: 0.3, dur: 3.8, dx: 24, dy: -48, peak: 0.95, rot: -5 },
+  { id: 11, left: '12%', top: '62%', size: 'w-6 sm:w-8 md:w-9', delay: 0.9, dur: 3.2, dx: 14, dy: -36, peak: 0.8, rot: 2 },
+  { id: 12, left: '29%', top: '63%', size: 'w-8 sm:w-10 md:w-12', delay: 0.8, dur: 3.4, dx: 20, dy: -42, peak: 0.88, rot: 3 },
+  { id: 13, left: '55%', top: '61%', size: 'w-7 sm:w-9 md:w-11', delay: 1.0, dur: 3.3, dx: 18, dy: -40, peak: 0.84, rot: -2 },
+  { id: 14, left: '72%', top: '62%', size: 'w-9 sm:w-11 md:w-13', delay: 0.85, dur: 3.5, dx: 22, dy: -44, peak: 0.9, rot: 4 },
+  { id: 15, left: '89%', top: '49%', size: 'w-6 sm:w-8 md:w-10', delay: 0.95, dur: 3.2, dx: 15, dy: -38, peak: 0.82, rot: -3 },
+];
+
+// Act 1 (Road) + Act 2 (Jiya Banquet Hall Arrival & Car Stop)
+const ROAD_START_DELAY = 0.35;
+const TITLE_DROP = 0.7;
+const TITLE_FROM_SCALE = 1.9;
+const CAR_START = 0.65;
+const CAR_ENTRY = 1.35;
+const ROAD_START = 1.25;
+const ROAD_RAMP = 1.0;
+const TITLE_TOP = 52;
+const HALL_CUT_AT = 2.75;   // Act 2: Jiya Banquet Hall scene fade-in
+const HALL_CAR_STOP = 4.75; // Car hall ke bahar mukammal rukti hai
+const ROAD_DRIVE = 5.15;    // Brief pause ke baad WebGL BurnReveal shuru
 const BURN_DUR = 2.4;
-const ROAD_SPEED = 0.6; // screen heights / sec
-const ROAD_TILES = 8; // (even rakho: mirrored tiling)
+const ROAD_SPEED = 0.65;
+const ROAD_TILES = 8;
 const ROAD_COL_MAX = 640;
-const ROAD_ZOOM = 1.7; // road image ko kitna bara karna (lane car se chauri ho)
-const LANE_FRAC = 0.2 * ROAD_ZOOM; // asphalt lane ki chauraai (column ka hissa): title isi mein fit
-const BURN_ORIGIN = [0.5, 0.27]; // aag yahan se phailti hai (car ki jagah, neeche se %)
+const ROAD_ZOOM = 1.7;
+const LANE_FRAC = 0.2 * ROAD_ZOOM;
+const BURN_ORIGIN = [0.48, 0.22]; // Seedha parked car ke upar se aag phail kar stage khulega
 
 /* =====================================================================
    COPY / THEME
@@ -145,9 +162,9 @@ const loadDecoded = (src) =>
     i.decoding = 'async';
     i.onload = async () => {
       try {
-        await i.decode(); // poori tarah decode hone ke baad hi success
+        await i.decode();
       } catch {
-        /* kuch browsers mein decode() reject hota hai jabke image theek load hui hoti hai */
+        /* fallback */
       }
       resolve(true);
     };
@@ -161,7 +178,6 @@ export const preloadPic = async (name, cb) => {
   if (cb) cb(ok);
 };
 
-// App.jsx aur LiveEventExperience dono yahi use karte hain: har decoded asset par progress + hard timeout
 export function usePreloadImages(names, timeoutMs = PRELOAD_TIMEOUT) {
   const [state, setState] = useState({ progress: 0, ready: false });
   const key = names.join('|');
@@ -184,7 +200,7 @@ export function usePreloadImages(names, timeoutMs = PRELOAD_TIMEOUT) {
         if (count === total) finish();
       })
     );
-    const t = setTimeout(finish, timeoutMs); // 0% / 33% par kabhi nahi atakta
+    const t = setTimeout(finish, timeoutMs);
     return () => {
       alive = false;
       clearTimeout(t);
@@ -196,7 +212,7 @@ export function usePreloadImages(names, timeoutMs = PRELOAD_TIMEOUT) {
 }
 
 export function Pic({ name, alt = '', className = '', style, imgRef }) {
-  const [format, setFormat] = useState('webp'); // webp -> png -> failed
+  const [format, setFormat] = useState('webp');
   const onError = () =>
     setFormat((f) => {
       if (f === 'webp') return 'png';
@@ -208,7 +224,6 @@ export function Pic({ name, alt = '', className = '', style, imgRef }) {
     });
   if (format === 'failed') return null;
   return (
-    // key: fallback par naya <picture>/<img> mount hota hai (Safari <source> hatne par dobara load nahi karta)
     <picture key={format} className="contents">
       {format === 'webp' && <source srcSet={`/images/${name}.webp`} type="image/webp" />}
       <img
@@ -230,7 +245,7 @@ const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* =====================================================================
-   STAGE CARD (2-stage countdown)
+   STAGE CARD
    ===================================================================== */
 function StageCard({ kind, onReplay }) {
   const clock = useNowTick();
@@ -342,7 +357,6 @@ function LiveLoader({ ready, progress, bg, text, accent }) {
   );
 }
 
-// Sunehri chamak ke zarre (Barat)
 function Sparks({ count = 16 }) {
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
@@ -358,7 +372,6 @@ function Sparks({ count = 16 }) {
 
 const LEAF_COLORS = ['#9BBF3A', '#D7B043', '#5F8F3A', '#C9962E'];
 
-// Girte hue patte (Walima)
 function Leaves({ count = 9 }) {
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
@@ -377,25 +390,29 @@ function Leaves({ count = 9 }) {
    LIVE EXPERIENCE
    ===================================================================== */
 export default function LiveEventExperience({ kind }) {
-  const entrance = ENTRANCE[kind]; // 'carpet' | 'road'
+  const entrance = ENTRANCE[kind];
   const root = useRef(null);
   const tlRef = useRef(null);
-  // Har asset decode hone par progress; 8s timeout par bhi loader hat jata hai
   const { progress, ready } = usePreloadImages(LIVE_ASSETS[kind]);
 
-  // Barat refs
+  // Walima refs
   const famRef = useRef(null);
   const swayRef = useRef(null);
   const bobRef = useRef(null);
-  // Walima refs
+
+  // Barat (road + Jiya Banquet Hall arrival) refs
   const s1Ref = useRef(null);
   const camRef = useRef(null);
   const trackRef = useRef(null);
   const carRef = useRef(null);
   const carSwayRef = useRef(null);
   const carVibRef = useRef(null);
+  const hallLayerRef = useRef(null);
+  const hallBgRef = useRef(null);
+  const hallCarRef = useRef(null);
+  const hallCarBodyRef = useRef(null);
   const cardLayerRef = useRef(null);
-  const titleRef = useRef(null); // road par ek baar ka title (outer: road ke saath scroll)
+  const titleRef = useRef(null);
   const resetRoadRef = useRef(null);
   const burnRef = useRef(0);
   const glOkRef = useRef(false);
@@ -408,54 +425,84 @@ export default function LiveEventExperience({ kind }) {
       const vh = window.innerHeight;
 
       /* ----------------------------------------------------------
-         BARAT: camera archway ki taraf chalta hai, family qadam-ba-qadam
-         (travel / weight-shift / step-bob alag layers), phir archway ki roshni
-         mein ghul kar royal stage khulta hai
+         WALIMA SKY LANTERNS + PALACE COURTYARD ENTRANCE
+         1. Static full-frame palace hall (no zoom/pan).
+         2. Couple/family stands steadily centered outside the hall.
+         3. 15 responsive sky lanterns rise from mid-screen upward with
+            opacity 0 -> 1 and gentle left-to-right drift.
+         4. Golden BurnReveal transitions into walima-stage + Walima card.
          ---------------------------------------------------------- */
       if (entrance === 'carpet') {
         const fam = famRef.current;
         const sway = swayRef.current;
         const bob = bobRef.current;
         const s1 = s1Ref.current;
+        const lanternEls = gsap.utils.toArray('.walima-lantern');
 
         burnRef.current = 0;
         gsap.set(s1, { autoAlpha: 1 });
         gsap.set(cardLayerRef.current, { autoAlpha: 0 });
-        gsap.set('.live-bg1', { scale: 1, transformOrigin: '50% 60%' });
+        gsap.set('.live-bg1', { scale: 1, yPercent: 0, transformOrigin: '50% 50%' });
         gsap.set(fam, { autoAlpha: 1, xPercent: -50, yPercent: 0, scale: 1, transformOrigin: '50% 90%' });
         gsap.set(sway, { rotation: 0, transformOrigin: '50% 100%' });
         gsap.set(bob, { y: 0 });
+        gsap.set('.live-heat', { opacity: 0 });
         gsap.set('.live-item', { opacity: 0, y: 16 });
         gsap.set('.live-pill', { opacity: 0, y: -10 });
 
-        // Qadam: ek gait cycle = 2 qadam (left, right); bob har qadam par
-        const steps = Math.round(WALK / STEP);
-        const gait = Array.from({ length: steps }, (_, i) => ({ rotation: i % 2 ? 1.4 : -1.4, duration: STEP }));
-        gait.push({ rotation: 0, duration: STEP / 2 });
-        const bobIters = 2 * steps; // even => bob 0px par wapas aata hai
+        lanternEls.forEach((el) => {
+          gsap.set(el, { opacity: 0, x: 0, y: 0, scale: 0.65, rotation: 0 });
+        });
 
-        const tl = gsap.timeline({ delay: CARPET_START_DELAY });
-        tl
-          // top live pill
-          .to('.live-pill', { opacity: 1, y: 0, duration: 0.6, ease: 'power2.out' }, 0.2)
-          // carpet halka zoom
-          .to('.live-bg1', { scale: CARPET_BG_ZOOM, duration: WALK, ease: 'power1.inOut' }, 0)
-          // family: zameen par chalti hui door jaati hai
-          .to(fam, { scale: CARPET_END_SCALE, yPercent: CARPET_END_Y, duration: WALK, ease: 'power1.inOut' }, 0)
-          // gait sway (+-1.4deg)
-          .to(sway, { keyframes: gait, easeEach: 'sine.inOut' }, 0)
-          // footstep bob (0 -> -5px)
-          .fromTo(bob, { y: 0 }, { y: -5, duration: STEP / 2, repeat: bobIters - 1, yoyo: true, ease: 'sine.inOut' }, 0)
-          // Walima wala burn dissolve, archway se: carpet jal kar royal stage dikhta hai
-          .fromTo(burnRef, { current: 0 }, { current: 1, duration: BURN_DUR, ease: 'power1.inOut' }, CARPET_BURN_AT)
+        const tl = gsap.timeline({ delay: WALIMA_START_DELAY });
+
+        // Top badge + subtle natural breathing motion for family standing outside the hall
+        tl.to('.live-pill', { opacity: 1, y: 0, duration: 0.6, ease: 'power2.out' }, 0.15)
+          .to(sway, { rotation: 0.9, duration: 2.0, yoyo: true, repeat: 1, ease: 'sine.inOut' }, 0.2)
+          .to(bob, { y: -2.5, duration: 1.4, yoyo: true, repeat: 2, ease: 'sine.inOut' }, 0.2);
+
+        // Multiple Sky Lanterns rising from mid-screen upward with opacity 0 -> 1 & left-to-right drift
+        lanternEls.forEach((el, idx) => {
+          const cfg = SKY_LANTERNS[idx % SKY_LANTERNS.length];
+          const dxPx = (cfg.dx / 100) * Math.min(vw, 520);
+          const dyPx = (cfg.dy / 100) * vh;
+
+          tl.fromTo(
+            el,
+            { opacity: 0, x: 0, y: 0, scale: 0.65, rotation: -cfg.rot },
+            {
+              x: dxPx,
+              y: dyPx,
+              scale: 1.08,
+              rotation: cfg.rot,
+              duration: cfg.dur,
+              ease: 'power1.out',
+            },
+            cfg.delay
+          ).to(
+            el,
+            {
+              opacity: cfg.peak,
+              duration: cfg.dur * 0.38,
+              ease: 'power2.out',
+            },
+            cfg.delay
+          );
+        });
+
+        // Warm golden glow before burn
+        tl.fromTo('.live-heat', { opacity: 0 }, { opacity: 0.72, duration: BURN_DUR * 0.5, ease: 'power1.in' }, WALIMA_BURN_AT - 0.25)
+          // BurnReveal transition into walima-stage
+          .fromTo(burnRef, { current: 0 }, { current: 1, duration: BURN_DUR, ease: 'power1.inOut' }, WALIMA_BURN_AT)
           .fromTo(
             s1,
             { autoAlpha: 1 },
             { autoAlpha: 0, duration: BURN_DUR, ease: (p) => (glOkRef.current ? (p >= 1 ? 1 : 0) : p) },
-            CARPET_BURN_AT
+            WALIMA_BURN_AT
           )
-          .to(cardLayerRef.current, { autoAlpha: 1, duration: 0.6, ease: 'power1.out' }, CARPET_BURN_AT + BURN_DUR * 0.55)
-          .to('.live-item', { opacity: 1, y: 0, duration: 0.7, stagger: 0.1, ease: 'power2.out' }, CARPET_BURN_AT + BURN_DUR * 0.6);
+          .to(cardLayerRef.current, { autoAlpha: 1, duration: 0.6, ease: 'power1.out' }, WALIMA_BURN_AT + BURN_DUR * 0.55)
+          .to('.live-item', { opacity: 1, y: 0, duration: 0.7, stagger: 0.1, ease: 'power2.out' }, WALIMA_BURN_AT + BURN_DUR * 0.6);
+
         tlRef.current = tl;
 
         if (!reduce) {
@@ -483,9 +530,11 @@ export default function LiveEventExperience({ kind }) {
       }
 
       /* ----------------------------------------------------------
-         WALIMA: car dheere dheere raftar pakadti hai (road speed ramp),
-         lane mein halka drift + yaw, camera push, phir car ki jagah se
-         aag phailti hai aur stage nazar aata hai
+         BARAT ENTRANCE (2 ACTS):
+         Act 1: Road par BARAT CELEBRATION stamp + car drive
+         Act 2: Jiya Banquet Hall exterior crossfade + rear-3/4 "Just Married"
+                car brick driveway par chhoti hoti hui hall ke bahar ja kar stop
+                hoti hai -> phir BurnReveal se stage card khulta hai
          ---------------------------------------------------------- */
       const s1 = s1Ref.current;
       const cam = camRef.current;
@@ -494,9 +543,12 @@ export default function LiveEventExperience({ kind }) {
       const sway = carSwayRef.current;
       const vib = carVibRef.current;
       const titleEl = titleRef.current;
+      const hallLayer = hallLayerRef.current;
+      const hallBg = hallBgRef.current;
+      const hallCar = hallCarRef.current;
+      const hallCarBody = hallCarBodyRef.current;
       const imgs = track.querySelectorAll('img');
 
-      // 2 tiles (original + mirrored) = ek seamless period
       let period = 0;
       const measure = () => {
         const im = imgs[0];
@@ -519,24 +571,24 @@ export default function LiveEventExperience({ kind }) {
         st.t += dt;
         st.y += st.speed * window.innerHeight * dt;
         apply();
-        // Title road ke saath EXACT usi raftar se neeche behta hai (road ka hi st.y), aur 120vh par hamesha ke liye gayab
         if (!titleGone) {
-          titleEl.style.transform = `translate3d(-50%, ${st.y.toFixed(1)}px, 0)`;
+          titleEl.style.transform = `translate3d(-50%, ${st.y.toFixed(2)}px, 0)`;
           if (st.y > window.innerHeight * 1.2) {
             titleGone = true;
             titleEl.style.visibility = 'hidden';
           }
         }
         const k = Math.min(1, st.speed / ROAD_SPEED);
-        const sx = Math.sin(st.t * 0.9) * 9 * k;
-        const yaw = Math.cos(st.t * 0.9) * 1.1 * k; // raftar ke saath nose ghoomti hai
+        const sx = Math.sin(st.t * 0.9) * 7 * k;
+        const yaw = Math.cos(st.t * 0.9) * 0.9 * k;
         sway.style.transform = `translate3d(${sx.toFixed(2)}px,0,0) rotate(${yaw.toFixed(3)}deg)`;
-        const j = k * 0.8;
-        vib.style.transform = `translate3d(${((Math.random() - 0.5) * j).toFixed(2)}px,${((Math.random() - 0.5) * j).toFixed(2)}px,0)`;
+        const bounce = (Math.sin(st.t * 23) * 0.6 + Math.sin(st.t * 37 + 1.3) * 0.4) * 1.5 * k;
+        const roll = (Math.sin(st.t * 17 + 0.7) * 0.6 + Math.sin(st.t * 29) * 0.4) * 0.35 * k;
+        vib.style.transform = `translate3d(0,${bounce.toFixed(2)}px,0) rotate(${roll.toFixed(3)}deg)`;
       };
       gsap.ticker.add(tick);
       window.addEventListener('resize', measure);
-      // Replay ke liye: road + title dobara shuru
+
       resetRoadRef.current = () => {
         st.y = 0;
         st.t = 0;
@@ -548,31 +600,78 @@ export default function LiveEventExperience({ kind }) {
       const BURN_AT = ROAD_DRIVE;
       burnRef.current = 0;
       apply();
+
       gsap.set(s1, { autoAlpha: 1 });
+      gsap.set(hallLayer, { autoAlpha: 0 });
+      gsap.set(hallBg, { scale: 1.07, transformOrigin: '55% 42%' });
+      gsap.set(hallCar, {
+        xPercent: -66,
+        yPercent: 52,
+        scale: 1.48,
+        transformOrigin: '50% 85%',
+      });
+      gsap.set(hallCarBody, { y: 0, rotation: 0, transformOrigin: '50% 85%' });
       gsap.set(cardLayerRef.current, { autoAlpha: 0 });
       gsap.set('.live-heat', { opacity: 0 });
+      gsap.set('.car-glow', { opacity: 0 });
       gsap.set(cam, { scale: 1, transformOrigin: '50% 80%' });
       gsap.set('.live-item', { opacity: 0, y: 16 });
-      gsap.set('.road-title', { scale: 2.2, opacity: 0, transformOrigin: '50% 50%' });
+      gsap.set('.road-title', { scale: TITLE_FROM_SCALE, opacity: 0, transformOrigin: '50% 50%' });
       titleEl.style.visibility = 'visible';
       titleEl.style.transform = 'translate3d(-50%, 0, 0)';
 
       const tl = gsap.timeline({ delay: ROAD_START_DELAY });
       tl
-        // STEP 1 (0 -> 0.8s): "WALIMA CELEBRATION" road par thappa ban kar girta hai
-        .fromTo('.road-title', { scale: 2.2, opacity: 0 }, { scale: 1, opacity: 1, duration: TITLE_DROP, ease: 'back.out(1.6)' }, 0)
-        // STEP 2 (0.8 -> 2.5s): car neeche se aati hai (z-index title se upar), phir cruise mein thora aage
-        .fromTo(car, { xPercent: -50, yPercent: 110 }, { xPercent: -50, yPercent: 0, duration: CAR_ENTRY, ease: 'power3.out' }, CAR_START)
-        .to(car, { y: -vh * 0.08, duration: BURN_AT + BURN_DUR * 0.6 - (CAR_START + CAR_ENTRY), ease: 'sine.inOut' }, CAR_START + CAR_ENTRY)
-        // STEP 3 (1.6s+): road loop shuru (title usi raftar se neeche nikalta hai), phir burn ke samay tezi -> ruk jao
-        .fromTo(st, { speed: 0 }, { speed: ROAD_SPEED, duration: ROAD_RAMP, ease: 'power2.inOut' }, ROAD_START)
-        .to(st, { speed: ROAD_SPEED * 1.8, duration: BURN_DUR + 0.4, ease: 'power1.in' }, BURN_AT - 0.4)
-        .to(st, { speed: 0, duration: 0.4, ease: 'power1.out' }, BURN_AT + BURN_DUR)
-        // camera peeche se dhakka (push-in)
-        .fromTo(cam, { scale: 1 }, { scale: 1.1, duration: BURN_AT + BURN_DUR, ease: 'power1.in' }, 0)
-        // aag se pehle car ke ird gird garmi ki chamak
-        .fromTo('.live-heat', { opacity: 0 }, { opacity: 0.75, duration: BURN_DUR * 0.6, ease: 'power1.in' }, BURN_AT - 0.2)
-        // burn dissolve (time based)
+        // ACT 1: Road title stamp + top-down car drive
+        .fromTo(
+          '.road-title',
+          { scale: TITLE_FROM_SCALE, opacity: 0 },
+          { scale: 1, opacity: 1, duration: TITLE_DROP, ease: 'back.out(1.5)' },
+          0
+        )
+        .fromTo(
+          car,
+          { xPercent: -50, yPercent: 115 },
+          { xPercent: -50, yPercent: 4, duration: CAR_ENTRY, ease: 'power2.out' },
+          CAR_START
+        )
+        .to(car, { y: -vh * 0.08, duration: HALL_CUT_AT - (CAR_START + CAR_ENTRY) + 0.4, ease: 'sine.inOut' }, CAR_START + CAR_ENTRY)
+        .fromTo('.car-glow', { opacity: 0 }, { opacity: 0.9, duration: 0.7, ease: 'power1.out' }, CAR_START + CAR_ENTRY * 0.55)
+        .fromTo(st, { speed: 0 }, { speed: ROAD_SPEED * 1.25, duration: ROAD_RAMP, ease: 'power2.inOut' }, ROAD_START)
+        .fromTo(cam, { scale: 1 }, { scale: 1.08, duration: HALL_CUT_AT + 0.5, ease: 'power1.in' }, 0)
+
+        // ACT 2: Crossfade to Jiya Banquet Hall exterior & "Just Married" car arrives & stops outside
+        .to(hallLayer, { autoAlpha: 1, duration: 0.65, ease: 'power2.inOut' }, HALL_CUT_AT)
+        .set(st, { speed: 0 }, HALL_CUT_AT + 0.65)
+        .to(hallBg, { scale: 1.0, duration: BURN_AT - HALL_CUT_AT + 0.4, ease: 'power2.out' }, HALL_CUT_AT)
+        .to(
+          hallCar,
+          {
+            xPercent: -53,
+            yPercent: -2,
+            scale: 1.02,
+            duration: HALL_CAR_STOP - HALL_CUT_AT,
+            ease: 'power3.out',
+          },
+          HALL_CUT_AT + 0.05
+        )
+        // Subtle forward brake dip & suspension settle right as the car comes to a complete stop
+        .to(
+          hallCarBody,
+          {
+            y: 3.5,
+            rotation: -0.7,
+            duration: 0.14,
+            yoyo: true,
+            repeat: 1,
+            ease: 'sine.inOut',
+          },
+          HALL_CAR_STOP - 0.05
+        )
+        // Warm golden heat bloom around the parked car outside Jiya Banquet Hall before burn
+        .fromTo('.live-heat', { opacity: 0 }, { opacity: 0.75, duration: BURN_DUR * 0.55, ease: 'power1.in' }, BURN_AT - 0.25)
+
+        // ACT 3: Golden BurnReveal -> Royal Stage Card
         .fromTo(burnRef, { current: 0 }, { current: 1, duration: BURN_DUR, ease: 'power1.inOut' }, BURN_AT)
         .fromTo(
           s1,
@@ -618,47 +717,80 @@ export default function LiveEventExperience({ kind }) {
     tlRef.current.restart();
   };
 
-  /* ============================ WALIMA (red carpet + family walk) ============================ */
+  /* ============================ WALIMA (Sky Lanterns + Palace Courtyard + Couple Center) ============================ */
   if (entrance === 'carpet') {
     return (
-      <div ref={root} className="fixed inset-0 overflow-hidden bg-[#2A050D]">
+      <div ref={root} className="fixed inset-0 overflow-hidden bg-[#140B1A]">
         <LiveLoader ready={ready} progress={progress} bg={LIVE_LOADER_BG} text="#F3E2A9" accent="#D4AF37" />
 
-        {/* STAGE (neeche): burn ke baad / WebGL na ho to yahi */}
+        {/* Stage background revealed by BurnReveal */}
         <div className="absolute inset-0 z-10">
           <Pic name={STAGE_IMG[kind]} className="h-full w-full object-cover" />
         </div>
 
-        {/* SCENE 1: red carpet + family walk */}
-        <div ref={s1Ref} className="absolute inset-0 z-20 overflow-hidden bg-[#2A050D]">
+        {/* Scene 1: Static Palace Courtyard + Rising Sky Lanterns + Centered Couple */}
+        <div ref={s1Ref} className="absolute inset-0 z-20 overflow-hidden bg-[#140B1A]">
           <div className="live-bg1 absolute inset-0 will-change-transform">
-            <Pic name="red-carpet-tunnel" className="w-full h-full object-cover" />
+            <Pic
+              name="walima-hall"
+              alt="Walima Palace Courtyard"
+              className="h-full w-full object-cover object-center"
+            />
           </div>
+
+          {/* Soft cinematic night vignette */}
           <div
             className="absolute inset-0 pointer-events-none"
-            style={{ background: 'radial-gradient(ellipse at 50% 70%, transparent 45%, rgba(20,2,6,0.55) 100%)' }}
+            style={{ background: 'radial-gradient(ellipse at 50% 55%, transparent 45%, rgba(12,6,20,0.52) 100%)' }}
           ></div>
 
-          {/* travel layer (GSAP xPercent/yPercent/scale) -> gait sway -> footstep bob.
-              z-20 + opacity 1: family-walk kabhi chhup / clip nahi hota */}
+          {/* Responsive Couple / Family centered in courtyard */}
           <div
             ref={famRef}
-            className="absolute bottom-0 left-1/2 z-20 w-[88vw] max-w-[460px] sm:max-w-[540px] md:max-w-[600px] will-change-transform"
+            className="absolute bottom-[3%] sm:bottom-[5%] left-1/2 z-20 w-[64vw] max-w-[260px] sm:max-w-[330px] md:max-w-[390px] will-change-transform"
             style={{ opacity: 1 }}
           >
             <div ref={swayRef} className="will-change-transform">
               <div ref={bobRef} className="will-change-transform">
-                <Pic name="family-walk" alt="Family walking" className="w-full h-auto block object-contain bg-transparent" />
+                <Pic
+                  name="family-walk"
+                  alt="Couple at Walima"
+                  className="w-full h-auto block object-contain bg-transparent drop-shadow-[0_14px_20px_rgba(0,0,0,0.55)]"
+                />
               </div>
             </div>
           </div>
 
-          {/* sparks family ke upar hi rahein */}
+          {/* Multiple Responsive Sky Lanterns rising from mid-screen upward + left-to-right drift */}
+          <div className="absolute inset-0 z-[24] pointer-events-none overflow-hidden" aria-hidden="true">
+            {SKY_LANTERNS.map((l) => (
+              <div
+                key={l.id}
+                className={`walima-lantern absolute ${l.size} will-change-transform`}
+                style={{ left: l.left, top: l.top, opacity: 0 }}
+              >
+                <Pic
+                  name="sky-lanterns"
+                  alt=""
+                  className="w-full h-auto block object-contain drop-shadow-[0_0_16px_rgba(255,175,65,0.85)]"
+                />
+              </div>
+            ))}
+          </div>
+
           <div className="absolute inset-0 z-[25] pointer-events-none">
             <Sparks />
           </div>
 
-          {/* Top live pill (red carpet walk ke dauran) */}
+          {/* Warm golden heat bloom right before burn */}
+          <div
+            className="live-heat absolute inset-0 z-[28] pointer-events-none opacity-0"
+            style={{
+              background: `radial-gradient(circle at ${WALIMA_BURN_ORIGIN[0] * 100}% ${(1 - WALIMA_BURN_ORIGIN[1]) * 100}%, rgba(255,205,120,0.85) 0%, rgba(255,150,60,0.35) 28%, transparent 62%)`,
+              mixBlendMode: 'screen',
+            }}
+          ></div>
+
           <div
             className="live-pill absolute inset-x-0 z-30 flex justify-center pointer-events-none"
             style={{ top: 'calc(env(safe-area-inset-top, 0px) + 52px)', opacity: 0 }}
@@ -675,18 +807,16 @@ export default function LiveEventExperience({ kind }) {
           </div>
         </div>
 
-        {/* BURN DISSOLVE: archway se phailta hai (Walima wala hi shader) */}
         <BurnReveal
           name={STAGE_IMG[kind]}
           progressRef={burnRef}
-          origin={CARPET_BURN_ORIGIN}
+          origin={WALIMA_BURN_ORIGIN}
           onStatus={(ok) => {
             glOkRef.current = ok;
           }}
           className="absolute inset-0 z-30"
         />
 
-        {/* WALIMA CARD */}
         <div ref={cardLayerRef} className="absolute inset-0 z-40" style={{ visibility: 'hidden', opacity: 0 }}>
           <div className={`absolute inset-0 pointer-events-none ${STAGE_OVERLAY[kind]}`}></div>
           <div className="relative z-10 h-full overflow-y-auto overscroll-contain">
@@ -699,7 +829,7 @@ export default function LiveEventExperience({ kind }) {
     );
   }
 
-  /* ============================ BARAT (road + car) ============================ */
+  /* ============================ BARAT (Act 1: Road -> Act 2: Jiya Banquet Hall Stop) ============================ */
   return (
     <div ref={root} className="fixed inset-0 overflow-hidden bg-[#10180f]">
       <LiveLoader ready={ready} progress={progress} bg={LIVE_LOADER_BG} text="#F3E2A9" accent="#D4AF37" />
@@ -709,7 +839,7 @@ export default function LiveEventExperience({ kind }) {
         <Pic name={STAGE_IMG[kind]} className="h-full w-full object-cover" />
       </div>
 
-      {/* SCENE 1: forest road + car */}
+      {/* SCENE 1 (z-20): Act 1 (Road) + Act 2 (Jiya Banquet Hall Exterior) dono is mein hain taake BurnReveal (z-30) seedha hall scene ko jalaye */}
       <div ref={s1Ref} className="absolute inset-0 z-20 overflow-hidden bg-[#10180f]">
         <div className="absolute inset-0 overflow-hidden" aria-hidden="true">
           <Pic name="walima-road" className="h-full w-full scale-110 object-cover blur-md" />
@@ -722,8 +852,6 @@ export default function LiveEventExperience({ kind }) {
             className="absolute inset-y-0 left-1/2 w-full -translate-x-1/2 overflow-hidden sm:[-webkit-mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)] sm:[mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]"
             style={{ maxWidth: ROAD_COL_MAX }}
           >
-            {/* Zoomed track: road lane image ke beech mein hai, isliye centered rehta hai.
-                Alternate tiles mirror hote hain -> joint par seam nahi dikhti. */}
             <div
               ref={trackRef}
               className="absolute top-0 will-change-transform"
@@ -740,8 +868,7 @@ export default function LiveEventExperience({ kind }) {
             </div>
           </div>
 
-          {/* ROAD TITLE: ek baar ka (repeating tiles se bahar). Outer = road ke saath scroll (ticker), inner = drop (GSAP).
-              z-[5]: car (z-10) is ke upar se guzarti hai */}
+          {/* ROAD TITLE */}
           <div
             ref={titleRef}
             className="absolute left-1/2 z-[5] pointer-events-none"
@@ -786,31 +913,78 @@ export default function LiveEventExperience({ kind }) {
 
           <Leaves />
 
-          {/* Car: outer = entry/cruise (GSAP), middle = lane drift+yaw, inner = engine vibration (ticker) */}
+          {/* Act 1 Top-Down Car */}
           <div
             ref={carRef}
             className="absolute bottom-[8%] left-1/2 z-10 will-change-transform"
             style={{ width: `clamp(88px, ${Math.round(0.24 * 100)}vw, ${Math.round(ROAD_COL_MAX * 0.24)}px)` }}
           >
             <div ref={carSwayRef} className="will-change-transform">
+              <div
+                className="car-glow pointer-events-none absolute left-1/2 -translate-x-1/2"
+                style={{
+                  bottom: '85%',
+                  width: '210%',
+                  height: '160%',
+                  opacity: 0,
+                  mixBlendMode: 'screen',
+                  background:
+                    'radial-gradient(ellipse at 50% 100%, rgba(255,214,140,0.55) 0%, rgba(255,190,100,0.22) 38%, transparent 70%)',
+                }}
+              ></div>
               <div ref={carVibRef} className="will-change-transform">
                 <Pic name="walima-car" className="block h-auto w-full select-none drop-shadow-[0_14px_14px_rgba(0,0,0,0.45)]" />
               </div>
             </div>
           </div>
-
-          {/* garmi ki chamak (burn se pehle) */}
-          <div
-            className="live-heat absolute inset-0 pointer-events-none opacity-0"
-            style={{
-              background: `radial-gradient(circle at ${BURN_ORIGIN[0] * 100}% ${(1 - BURN_ORIGIN[1]) * 100}%, rgba(255,205,120,0.85) 0%, rgba(255,150,60,0.35) 28%, transparent 62%)`,
-              mixBlendMode: 'screen',
-            }}
-          ></div>
         </div>
+
+        {/* ACT 2: Jiya Banquet Hall Exterior + Rear-3/4 "Just Married" Car Stopping Outside */}
+        <div
+          ref={hallLayerRef}
+          className="absolute inset-0 z-20 overflow-hidden bg-[#140c08]"
+          style={{ visibility: 'hidden', opacity: 0 }}
+        >
+          <div ref={hallBgRef} className="absolute inset-0 will-change-transform">
+            <Pic
+              name="jiya-hall-exterior"
+              alt="Jiya Banquet Hall"
+              className="h-full w-full object-cover object-[56%_center] sm:object-center"
+            />
+          </div>
+
+          {/* Subtle golden warm vignette */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: 'radial-gradient(ellipse at 55% 45%, transparent 48%, rgba(16,8,4,0.45) 100%)' }}
+          ></div>
+
+          {/* Arriving "Just Married" Vintage Car */}
+          <div
+            ref={hallCarRef}
+            className="absolute bottom-[4%] sm:bottom-[6%] left-1/2 z-10 w-[92vw] max-w-[350px] sm:max-w-[430px] md:max-w-[480px] will-change-transform"
+          >
+            <div ref={hallCarBodyRef} className="will-change-transform">
+              <Pic
+                name="barat-car-arriving"
+                alt="Just Married Car"
+                className="block h-auto w-full select-none drop-shadow-[0_18px_22px_rgba(0,0,0,0.68)]"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Garmi ki chamak (burn se pehle parked car ke ird gird) */}
+        <div
+          className="live-heat absolute inset-0 z-30 pointer-events-none opacity-0"
+          style={{
+            background: `radial-gradient(circle at ${BURN_ORIGIN[0] * 100}% ${(1 - BURN_ORIGIN[1]) * 100}%, rgba(255,205,120,0.85) 0%, rgba(255,150,60,0.35) 28%, transparent 62%)`,
+            mixBlendMode: 'screen',
+          }}
+        ></div>
       </div>
 
-      {/* BURN DISSOLVE: car ki jagah se phailta hai */}
+      {/* BURN DISSOLVE: hall ke bahar khari car ki jagah se phailta hai */}
       <BurnReveal
         name={STAGE_IMG[kind]}
         progressRef={burnRef}
